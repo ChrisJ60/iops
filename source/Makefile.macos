@@ -1,0 +1,18 @@
+############################################################
+#
+# macOS Makefile for IOPS and STATFS
+#
+# Copyright (c) Chris Jenkins 2019, 2020
+#
+# Licensed under the Universal Permissive License v 1.0 as
+# shown at http://oss.oracle.com/licenses/upl
+#
+############################################################
+
+all:	iops
+
+clean:
+	rm -rf iops *.o *.dSYM
+
+iops:	iops.c
+	cc -O2 -o iops iops.c

@@ -1,0 +1,234 @@
+#!/bin/zsh
+
+############################################################
+#
+# Convenience script for running IOPS
+#
+# Copyright (c) Chris Jenkins 2019, 2020
+#
+# Licensed under the Universal Permissive License v 1.0 as
+# shown at http://oss.oracle.com/licenses/upl
+#
+############################################################
+
+############################################################
+# reset all shell options to default
+emulate -LR zsh
+# set required options
+setopt nullglob
+setopt shwordsplit
+setopt ksharrays
+
+############################################################
+# reset PATH to system default
+eval "$(/usr/libexec/path_helper)"
+
+readonly integer dfltmaxthread=4
+
+declare tpath=""
+declare fsize=""
+declare cacheopt=""
+declare iosizes=""
+integer fsblksz=0
+integer fsoptiosz=0
+integer maxthread=0
+integer ret=0
+
+usage()
+{
+    echo
+    echo "Usage:"
+    echo
+    echo "    runiops <testpath> [-fsize <fsz>] [-maxthread <thrds>] [-cached]"
+    echo
+    echo "Runs a comprehensive set of IOPS tests using 'testpath'. The"
+    echo "default file size is 1 GB but you can change that (upwards)"
+    echo "using the optional '-fsize' argument."
+    echo
+    echo "NOTE: The file at 'testpath' will be overwritten without"
+    echo "      warning."
+    echo
+    echo "Normally tests will be run using a thread count of 1 through"
+    echo "${dfltmaxthread} but this can be changed using the optional '-maxthread'"
+    echo "argument."
+    echo
+    echo "Normally tests are run in non-cached mode but you can run them"
+    echo "in cached mode by specifying '-cached'."
+    echo
+    echo "A full iteration of tests takes around 28 minutes so using the"
+    echo "the default of 1 through 4 threads the entire test cycle will"
+    echo "will take a little under 2 hours."
+    echo
+    exit 100
+}
+
+init()
+{
+    local -i tmp
+
+    if [[ $# -lt 1 ]]
+    then
+        usage
+    fi
+    tpath="$1"
+    shift
+
+    while [[ $# -gt 0 ]]
+    do
+        case "$1" in
+            "-cached")
+                if [[ "${cacheopt}" != "" ]]
+                then
+                    usage
+                fi
+                cacheopt="-cache -rdahead -nodsync"
+                ;;
+            "-fsize")
+                if [[ "${fsize}" != "" ]]
+                then
+                    usage
+                fi
+                shift
+                if [[ $# -lt 1 ]]
+                then
+                    usage
+                fi
+                fsize="$1"
+                ;;
+            "-maxthread")
+                if [[ ${maxthread} -gt 0 ]]
+                then
+                    usage
+                fi
+                shift
+                if [[ $# -lt 1 ]]
+                then
+                    usage
+                fi
+                if ! isnumeric "$1"
+                then
+                    usage
+                fi
+                if [[ $1 -lt 1 ]]
+                then
+                    usage
+                fi
+                maxthread=$1
+                ;;
+            *)
+                usage
+                ;;
+        esac
+        shift
+    done
+
+    if [[ ${maxthread} -eq 0 ]]
+    then
+        maxthread=${dfltmaxthread}
+    fi
+
+    psudo rm -f "${tpath}" >& /dev/null
+    if ! touch "${tpath}" >& /dev/null
+    then
+        echo >&2 "error: unable to create '${tpath}'"
+        return 1
+    fi
+
+    if ! eval $(statfs -s "${tpath}" 2>/dev/null)
+    then
+        echo >&2 "error: unable to get filesystem info for '${tpath}'"
+        psudo rm -f "${tpath}" >& /dev/null
+        return 2
+    fi
+
+    fsblksz=${f_bsize}
+    fsoptiosz=${f_iosize}
+
+    psudo rm -f "${tpath}" >& /dev/null
+
+    tmp=${fsblksz}+1
+    iosizes="512 ${fsblksz} ${tmp} ${fsoptiosz}"
+    tmp=${fsoptiosz}+1
+    iosizes="${iosizes} ${tmp}"
+    tmp=${fsoptiosz}*2
+    iosizes="${iosizes} ${tmp}"
+    tmp=${fsoptiosz}*4
+    iosizes="${iosizes} ${tmp}"
+
+    return 0
+}
+
+createTestFile()
+{
+
+    local fsz=""
+
+    if [[ "${fsize}" != "" ]]
+    then
+        fsz="-fsize ${fsize}"
+    fi
+
+    iops c -file "${tpath}" ${fsz} -cpu
+    return $?
+}
+
+testIOPS()
+{
+    local -i thrds=0
+    local iosz=""
+
+    if [[ "${cacheopt}" != "" ]]
+    then
+#       prime filesystem cache
+        iops s -1file "${tpath}" ${cacheopt} -threads 1 >& /dev/null
+    fi
+
+    for iosz in ${iosizes}
+    do
+        thrds=1
+        while [[ ${thrds} -le ${maxthread} ]]
+        do
+            if ! iops s -1file "${tpath}" ${cacheopt} -cpu -iosz ${iosz} -threads ${thrds}
+            then
+                return 1
+            fi
+            thrds=${thrds}+1
+        done
+    done
+
+    for iosz in ${iosizes}
+    do
+        thrds=1
+        while [[ ${thrds} -le ${maxthread} ]]
+        do
+            if ! iops r -1file "${tpath}" ${cacheopt} -cpu -iosz ${iosz} -threads ${thrds}
+            then
+                return 2
+            fi
+            thrds=${thrds}+1
+        done
+    done
+
+    return 0
+}
+
+init "$@"
+ret=$?
+if [[ ${ret} -ne 0 ]]
+then
+    exit ${ret}
+fi
+
+createTestFile
+ret=$?
+if [[ ${ret} -ne 0 ]]
+then
+    exit ${ret}
+fi
+
+testIOPS
+ret=$?
+
+psudo rm -f "${tpath}" >& /dev/null
+
+exit ${ret}
