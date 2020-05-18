@@ -43,7 +43,7 @@
  */
 
 #define  PROGNAME         "IOPS"
-#define  VERSION          "2.0"
+#define  VERSION          "2.1"
 
 #define  WAIT_US          10
 #define  MSG_BUFF_SZ      256
@@ -404,7 +404,7 @@ usage(
     printf("               of each test.\n\n");
 
     printf("    -verbose   Displays additional, possibly interesting, information\n");
-    printf("               during execution. Primarily per thread metrics\n\n");
+    printf("               during execution. Primarily per thread metrics.\n\n");
 
     printf("The following options are for special usage only. The objective\n");
     printf("of this utility is to measure the performance of the hardware (as\n");
@@ -474,11 +474,18 @@ usage(
     printf("               fdatasync() on the file. If this option is specified\n");
     printf("               then that call is not made.\n\n");
 
+    printf("        NOTES:\n");
+    printf("               - The measured time for write tests includes the time for\n");
+    printf("                 any 'fdatasync()' and/or 'close()' that is part of the test.\n");
+    printf("               - Due to an implementation quirk, the CPU time reported for\n");
+    printf("                 write tests does not include any 'fdatasync()' or 'close()'\n");
+    printf("                 operations.\n\n");
+
     exit( 100 );
 } // usage
 
 /*
- * Sleep for a specifaeid number of microseconds.
+ * Sleep for a specified number of microseconds.
  */
 
 void
@@ -1167,15 +1174,12 @@ openFile(
     flags = O_RDWR;
     if (  create  )
         flags |= O_CREAT|O_EXCL;
-#if defined(LINUX)
     if (  ! ctxt->nodsync  )
         flags |= O_DSYNC;
+#if defined(LINUX)
     if (  ! ctxt->cache  )
         flags |= O_DIRECT;
-#else /* macOS */
-    if (  ! ctxt->nodsync  )
-        flags |= O_DSYNC;
-#endif /* macOS */
+#endif /* Linux */
     errno = 0;
     ctxt->fd = open( ctxt->tfname, flags, 0600 );
     if (  ctxt->fd < 0  )
@@ -1720,6 +1724,8 @@ testIOPSRandom(
         stopus = getTimeAsUs();
         ctxt->fsyncus = stopus - startus;
     }
+    else
+        ctxt->fsyncus = 0;
 
     if (  doclose  )
     {
@@ -1729,11 +1735,13 @@ testIOPSRandom(
             ctxt->closeus = stopus - startus;
             ctxt->fd = -1;
     }
+    else
+        ctxt->closeus = 0;
 
     if (  readops  )
         ctxt->rdduration = ctxt->usrdstop - ctxt->usrdstart;
     else
-        ctxt->wrduration = ctxt->uswrstop - ctxt->uswrstart;
+        ctxt->wrduration = (ctxt->uswrstop - ctxt->uswrstart) + ctxt->fsyncus + ctxt->closeus;
 
     return 0;
 } // testIOPSRandom
@@ -1895,7 +1903,9 @@ testIOPSSequential(
         stopus = getTimeAsUs();
         ctxt->fsyncus = stopus - startus;
     }
-
+    else
+        ctxt->fsyncus = 0;
+ 
     if (  doclose  )
     {
             startus = getTimeAsUs();
@@ -1904,11 +1914,13 @@ testIOPSSequential(
             ctxt->closeus = stopus - startus;
             ctxt->fd = -1;
     }
+    else
+        ctxt->closeus = 0;
 
     if (  readops  )
 	ctxt->rdduration = ctxt->usrdstop - ctxt->usrdstart;
     else
-	ctxt->wrduration = ctxt->uswrstop - ctxt->uswrstart;
+        ctxt->wrduration = (ctxt->uswrstop - ctxt->uswrstart) + ctxt->fsyncus + ctxt->closeus;
 
     return 0;
 } // testIOPSSequential
@@ -2151,6 +2163,7 @@ runTests(
             mainctxt->fsz += threadcontexts[i].fsz;
             mainctxt->preallocus += threadcontexts[i].preallocus;
             mainctxt->fsyncus += threadcontexts[i].fsyncus;
+            mainctxt->closeus += threadcontexts[i].closeus;
             if (  mainctxt->verbose && (mainctxt->threads > 1)  )
             {
                 if (  ! mainctxt->onefile || (i == 0)  )
@@ -2161,6 +2174,8 @@ runTests(
              (((double)threadcontexts[i].fsz/(double)MB_MULT)*1000000.0)/(double)usdur );
                         if (  threadcontexts[i].fsyncus )
                             printf("Thread %d: sync time = %'ld µs\n", i, threadcontexts[i].fsyncus );
+                        if (  threadcontexts[i].closeus )
+                            printf("Thread %d: close time = %'ld µs\n", i, threadcontexts[i].closeus );
                     }
                     else
                         printf("Thread %d: insufficient accuracy to report write rate\n", i );
@@ -2194,6 +2209,13 @@ runTests(
                     printf("Sync time = %'ld µs\n", mainctxt->fsyncus );
                 else
                     printf("Average sync time = %'ld µs\n", mainctxt->fsyncus / mainctxt->threads );
+            }
+            if (  mainctxt->closeus  )
+            {
+                if (  mainctxt->onefile || (mainctxt->threads == 1)  )
+                    printf("Close time = %'ld µs\n", mainctxt->closeus );
+                else
+                    printf("Average close time = %'ld µs\n", mainctxt->closeus / mainctxt->threads );
             }
         }
         else
@@ -2343,8 +2365,7 @@ runTests(
             mainctxt->nreads += threadcontexts[i].nreads;
             usdur = threadcontexts[i].rdduration;
             mainctxt->rdduration += usdur;
-            if (  mainctxt->verbose && (mainctxt->threads > 1) &&
-                  (threadcontexts[i].rdduration > 0)  )
+            if (  mainctxt->verbose && (mainctxt->threads > 1) && (usdur > 0)  )
                 printf("Thread %d: %'ld reads in %'ld µs = %.2f read IOPS, %.2f MB/s\n",
                    i, threadcontexts[i].nreads, usdur,
           ((double)threadcontexts[i].nreads*(double)1000000.0)/(double)usdur,
@@ -2503,6 +2524,7 @@ runTests(
             usdur = threadcontexts[i].wrduration;
             mainctxt->wrduration += usdur;
             mainctxt->fsyncus += threadcontexts[i].fsyncus;
+            mainctxt->closeus += threadcontexts[i].closeus;
             if (  mainctxt->verbose && (mainctxt->threads > 1) &&
                   (threadcontexts[i].wrduration > 0)  )
             {
@@ -2510,9 +2532,10 @@ runTests(
                    i, threadcontexts[i].nwrites, usdur,
           ((double)threadcontexts[i].nwrites*(double)1000000.0)/(double)usdur,
           ((double)threadcontexts[i].nwrites*(double)threadcontexts[i].iosz*(double)1000000.0)/(double)(MB_MULT*usdur));
-                // if (  threadcontexts[i].fsyncus && ( ! mainctxt->onefile || (i == 0) )  )
                 if (  threadcontexts[i].fsyncus  )
                     printf("Thread %d: sync time = %'ld µs\n", i, threadcontexts[i].fsyncus );
+                if (  threadcontexts[i].closeus  )
+                    printf("Thread %d: close time = %'ld µs\n", i, threadcontexts[i].closeus );
             }
         }
 
@@ -2530,6 +2553,13 @@ runTests(
                       printf("Sync time = %'ld µs\n", mainctxt->fsyncus );
                   else
                       printf("Average sync time = %'ld µs\n", mainctxt->fsyncus / mainctxt->threads );
+              }
+              if ( mainctxt->closeus )
+              {
+                  if ( mainctxt->threads == 1  )
+                      printf("Close time = %'ld µs\n", mainctxt->closeus );
+                  else
+                      printf("Average close time = %'ld µs\n", mainctxt->closeus / mainctxt->threads );
               }
             }
             if (  mainctxt->threads > 1  )
@@ -2594,6 +2624,8 @@ createFile(
              (((double)ctxt->fsz/(double)MB_MULT)*1000000.0)/(double)ctxt->crduration );
                 if (  ctxt->fsyncus  )
                     printf("Sync time = %'ld µs\n", ctxt->fsyncus );
+                if (  ctxt->closeus  )
+                    printf("Close time = %'ld µs\n", ctxt->closeus );
             }
             else
                 printf("Insufficient accuracy to report write rate\n");

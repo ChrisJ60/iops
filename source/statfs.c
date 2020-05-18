@@ -362,6 +362,9 @@ displayStatFs( struct statfs * sfs, struct statvfs * svfs, int dfmt )
         printf("Total blocks:     %'llu\n", sfs->f_blocks);
         printf("Free blocks:      %'llu\n", sfs->f_bfree);
         printf("Available blocks: %'llu\n", sfs->f_bavail);
+        printf("Total bytes:      %'llu\n", sfs->f_blocks*sfs->f_bsize);
+        printf("Free bytes:       %'llu\n", sfs->f_bfree*sfs->f_bsize);
+        printf("Available bytes:  %'llu\n", sfs->f_bavail*sfs->f_bsize);
         printf("Total inodes:     %'llu\n", sfs->f_files);
         printf("Free indodes:     %'llu\n", sfs->f_ffree);
         printf("Max filename len: %ld\n", sfs->f_namelen);

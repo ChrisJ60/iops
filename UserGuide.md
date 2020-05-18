@@ -103,7 +103,7 @@
 	              of each test.
 	
 	   -verbose   Displays additional, possibly interesting, information
-	              during execution. Primarily per thread metrics
+	              during execution. Primarily per thread metrics.
 	
 	The following options are for special usage only. The objective
 	of this utility is to measure the performance of the hardware (as
@@ -163,4 +163,11 @@
 	              test each thread will call the platform equivalent of
 	              fdatasync() on the file. If this option is specified
 	              then that call is not made.
-	
+
+        NOTES:
+               - The measured time for write tests includes the time for
+                 any 'fdatasync()' and/or 'close()' that is part of the test.
+                 
+               - Due to an implementation quirk, the CPU time reported for
+                 write tests does not include any 'fdatasync()' or 'close()'
+                 operations.	
