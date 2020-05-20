@@ -43,13 +43,17 @@
  */
 
 #define  PROGNAME         "IOPS"
-#define  VERSION          "2.1"
+#define  VERSION          "2.2"
+
+#define  ALLOW_RAW        1
 
 #define  WAIT_US          10
 #define  MSG_BUFF_SZ      256
 #define  KB_MULT          1024L
 #define  MB_MULT          (KB_MULT * KB_MULT)
 #define  GB_MULT          (MB_MULT * KB_MULT)
+#define  TB_MULT          (GB_MULT * KB_MULT)
+#define  PB_MULT          (TB_MULT * KB_MULT)
 #define  MIN_FSIZE        (1 * GB_MULT)
 #define  MAX_FSIZE        (10 * GB_MULT)
 #define  DFLT_FSIZE       MIN_FSIZE
@@ -123,6 +127,10 @@ struct s_context
     int    reportcpu;
     int    threadno;
     int    fd;
+#if defined( ALLOW_RAW )
+    int    raw;
+    int    blk;
+#endif
     int    retcode;
     volatile int crready;
     volatile int rdready;
@@ -198,6 +206,10 @@ context_t mctxt =
     0,
     0,
     -1,
+#if defined( ALLOW_RAW )
+    0,
+    0,
+#endif
     0,
     0,
     0,
@@ -221,6 +233,95 @@ context_t tctxt[MAX_THREADS];
 /********************************************************************
  * Functions
  */
+
+#if defined( ALLOW_RAW )
+
+/*
+ * Align offest to block size.
+ */
+
+off_t
+alignOffset(
+    off_t offset,
+    long  blksz
+           )
+{
+    off_t rem;
+
+    rem = offset % blksz;
+    if (  rem  )
+    {
+        offset -= rem;
+        if ( offset < 0  )
+            offset = 0;
+    }
+
+    return offset;
+} // alignOffset
+
+/*
+ * Check if the block at a particular offset is readable.
+ */
+
+int
+probeBlock( int fd, off_t offset, long blksz, void * blk )
+{
+    off_t offret = 0;
+    ssize_t nbytes;
+
+    errno = 0;
+    if (  lseek( fd, offset, SEEK_SET ) != offset  )
+        return 0;
+    errno = 0;
+    if (  read( fd, blk, blksz ) != blksz  )
+        return 0;
+
+    return 1;
+} // probeBlock
+
+/*
+ * Find the size of the raw/block device pointed to by 'fd'.
+ */
+
+long long
+findRawSize(
+    int fd,
+    long blksz
+           )
+{
+    void * ioblk = NULL;
+    off_t poffset;
+    off_t offset;
+    off_t minsz = 0;
+    off_t maxsz = PB_MULT;
+
+    ioblk = (void *)valloc( blksz );
+    if (  ioblk == NULL  )
+        return -1;
+
+    if (  ! probeBlock( fd, minsz, blksz, ioblk )  )
+        offset = -1;
+    else
+    {
+        offset = alignOffset( maxsz, blksz );
+        if (  ! probeBlock( fd, offset, blksz, ioblk )  )
+        {
+            do {
+                poffset = offset;;
+                offset = alignOffset( ( (maxsz - minsz) / 2 ) + minsz, blksz );
+                if (  probeBlock( fd, offset, blksz, ioblk )  )
+                    minsz = offset;
+                else
+                    maxsz = offset;
+            } while ( offset != poffset );
+        }
+    }
+
+    free( ioblk );
+    return ( offset + blksz );
+} // findRawSize
+
+#endif /* ALLOW_RAW */
 
 /*
  * Signal handler.
@@ -323,12 +424,10 @@ usage(
     printf("Parameters are:\n\n");
 
     printf("  s[equential]\n");
-    printf("     Performs a sequential I/O test. The test file(s) are read and\n");
-    printf("     written sequentially.\n\n");
+    printf("     Performs a sequential I/O test.\n\n");
 
     printf("  r[andom]\n");
-    printf("     Performs a random I/O test. The test file(s) are read and written\n");
-    printf("     randomly.\n\n");
+    printf("     Performs a random I/O test.\n\n");
 
     printf("  c[reate]\n");
     printf("     Creates a file suitable for later use with the '-1file' option.\n\n");
@@ -336,150 +435,204 @@ usage(
     printf("  h[elp]\n");
     printf("     Display full help (this text).\n\n");
 
-    printf("     fpath  -  Path of the file to use for testing. A separate file\n");
-    printf("               named 'fpath-nn' will be created for each test thread\n");
-    printf("               where 'nn' is the thread number (unless the '-1file'\n");
-    printf("               option is used). These files must not already exist.\n");
-    printf("               The default value for 'fpath' is '%s'.\n\n",
-                           DFLT_FNAME);
+    printf("    -file <fpath>\n");
+    printf("        Path of the file to use for testing. A separate file named 'fpath-nn'\n");
+    printf("        will be created for each test thread, where 'nn' is the thread number,\n");
+    printf("        unless the '-1file' option is used. The default value for <fpath> is\n");
+    printf("        '%s'.\n\n", DFLT_FNAME);
 
-    printf("     fsz    -  This size of each test file. By default the size\n");
-    printf("               is specified in bytes but it can be specified in\n");
-    printf("               kilobytes (1024 bytes), megabytes (1024*1024 bytes) or\n");
-    printf("               gigabytes (1024*1024*1024 bytes) by using a suffix of\n");
-    printf("               k, m or g on the value. The value must be in the\n");
-    printf("               range %'ld GB to %'ld GB. The default is %'ld GB.\n\n",
-                           MIN_FSIZE/GB_MULT, MAX_FSIZE/GB_MULT,
-                           DFLT_FSIZE/GB_MULT );
+    printf("        Files that will be created must not already exist. Any files created\n");
+    printf("        will be removed automatically.\n\n");
 
-    printf("    tsz     -  The size of each test I/O request, specified in the\n");
-    printf("               same manner as for 'fsz'. The value must be > 0 and\n" );
-    printf("               <= %'ld MB. The default is the optimal I/O size for\n",
-                           MAX_IOSZ/MB_MULT);
-    printf("               the file system containing the test file or %'ld MB\n",
-                           DFLT_IOSZ/MB_MULT);
-    printf("               if that cannot be determined.\n\n");
+    printf("    -fsize <fsz>\n");
+    printf("        When creating test files, the size of each test file. When using an\n");
+    printf("        existing file, the maximum offset within the file to be used when\n");
+    printf("        testing. The value must be in the range %'ld GB to %'ld GB. When creating\n",
+                    MIN_FSIZE/GB_MULT, MAX_FSIZE/GB_MULT );
+    printf("        files the default is %'ld GB.\n\n", DFLT_FSIZE/GB_MULT );
 
-#if defined(LINUX)
-    printf("               On Linux, caching is disabled by opening the file with\n");
-    printf("               the O_DIRECT flag. This has the side effect of requiring\n");
-    printf("               all I/O to the file to be filesystem block aligned. Hence\n");
-    printf("               on Linux, unless caching is enabled, values for '-iosz'\n");
-    printf("               must be a whole multiple of the filesystem block size or\n");
-    printf("               errors will occur.\n\n");
-#endif /* LINUX */
-    printf("    gsz     -  The size of each write request when creating the test\n");
-    printf("               file(s), specified in the same manner as for 'fsz'. Must\n");
-    printf("               be > 0 and <= 'fsz'. The default is the closest multiple\n");
-    printf("               of the filesystem's optimal I/O size to %'ld MB or %'ld MB\n",
-                           DFLT_GENIOSZ/MB_MULT, DFLT_GENIOSZ/MB_MULT);
-    printf("               if that cannot be determined.\n\n");
-
-    printf("    tdur    -  The duration of the measured part of the test in seconds.\n");
-    printf("               Must be between %'d and %'d, the default is %'d\n\n",
-                           MIN_DUR, MAX_DUR, DFLT_DUR);
-
-    printf("    tramp   -  The ramp up/down time, before/after the measured part of\n");
-    printf("               the test, in seconds. Must be between %'d and %'d,\n",
-                           MIN_RAMP, MAX_RAMP);
-    printf("               the default is %'d\n\n", DFLT_RAMP);
-
-    printf("        NOTE:\n");
-    printf("               The default measurement duration and ramp times have been\n");
-    printf("               chosen to give a reasonable result across a wide range of\n");
-    printf("               storage systems.\n\n");
-
-    printf("     nthr   -  The number of concurrent threads to use for the test.\n");
-    printf("               The minimum (and default) value is 1 and the maximum\n");
-    printf("               is %d. Threads are numbered from 0. With fast\n",
-                           MAX_THREADS);
-    printf("               devices (SSDs and similar) you will likely need to use\n");
-    printf("               multiple threads in order to accurately measure the\n");
-    printf("               device's maximum performance. For rotational devices\n");
-    printf("               (regular HDDs) using multiple threads may be counter\n");
-    printf("               productive as it could result in contention (though the\n");
-    printf("               results may still be interesting).\n\n");
-
-    printf("    -cpu       Displays CPU usage information for the measurement part\n");
-    printf("               of each test.\n\n");
-
-    printf("    -verbose   Displays additional, possibly interesting, information\n");
-    printf("               during execution. Primarily per thread metrics.\n\n");
-
-    printf("The following options are for special usage only. The objective\n");
-    printf("of this utility is to measure the performance of the hardware (as\n");
-    printf("far as is possible given that a filesystem is interposed between\n");
-    printf("the test program and the hardware). As a result certain OS features\n");
-    printf("are used by default to try to achieve this. The setings below allow\n");
-    printf("you to change aspects of the default behaviour. This may be interesting\n");
-    printf("but the results so achieved should be interpreted with caution.\n\n");
-
-    printf("    -1file [usrfpath]\n");
-    printf("               Normally each test thread creates its own test file in order\n");
-    printf("               to avoid any filesystem contention that might arise from\n");
-    printf("               multiple threads performing I/O on the same file. When this\n");
-    printf("               option is specified all threads share the same test file.\n");
-    printf("               Each thread opens the file independently but I/O operations\n");
-    printf("               are not synchronised between the threads.\n\n");
-
-    printf("               Normally the test file is created automatically but if the\n");
-    printf("               optional 'usrfpath' is used then the specified file is used\n");
-    printf("               instead.\n\n");
-
-    printf("        NOTES:\n");
-    printf("               - If a user file is specified it must be between %'ld GB\n",
-                             MIN_FSIZE/GB_MULT);
-    printf("                 and %'ld GB in size.\n", MAX_FSIZE/GB_MULT);
-    printf("               - The contents of the user file will be overwritten without\n");
-    printf("                 warning!\n");
-    printf("               - The user file will not be removed at the end of the test.\n");
-    printf("               - 'usrfpath' option is mutually exclusive with the\n");
-    printf("                 '-file', '-geniosz' and '-nopreallocate' options.\n");
-    printf("               - The default for '-fsize' is the size of the user file.\n");
-    printf("                 If you explicitly specify a value for '-fsize' it must be\n");
-    printf("                 <= the actual file size.\n\n");
-
-    printf("    -nopreallocate\n");
-    printf("               Normally the space for the test file(s) is pre-allocated\n");
-    printf("               (contiguously if possible) using OS APIs. If this\n");
-    printf("               option is specified then the space will not be pre-\n");
-    printf("               allocated.\n\n");
+    printf("        The size is specified in bytes but it can be specified in kilobytes\n");
+    printf("        (1024 bytes), megabytes (1024*1024 bytes) or gigabytes (1024*1024*1024\n");
+    printf("        bytes) by using a suffix of k, m or g on the value.\n\n");
 
 #if ! defined(LINUX)
-    printf("    -rdahead   Normally OS read ahead is disabled for the test\n");
-    printf("               file(s). If this option is specified then read ahead\n");
-    printf("               will not be explicitly disabled.\n\n");
-#endif /* ! Linux */
+    printf("    -iosz <tsz>\n");
+    printf("        The size of each test I/O request, specified in the same manner as\n");
+    printf("        for '-fsize'. The value must be > 0 and <= %'ld MB. The default is\n",
+                    MAX_IOSZ/MB_MULT );
+    printf("        the optimal I/O size for the filesystem containing the test file(s)\n");
+    printf("        or %'ld MB if that cannot be determined.\n\n",
+                    DFLT_IOSZ/MB_MULT);
 
-    printf("    -cache     Normally OS filesystem caching is disabled for the\n");
-    printf("               test file(s). If this option is specified then caching\n");
-    printf("               will not be explicitly disabled.\n\n");
+    printf("        When testing a block or raw device, the value must be a multiple of\n");
+    printf("        the device's block size, as reported by 'stat', or the test will\n");
+    printf("        fail.\n\n");
 
-#if defined(LINUX)
-    printf("        IMPORTANT NOTE:\n");
-    printf("               On Linux, caching is disabled by opening the file with\n");
-    printf("               the O_DIRECT flag. This has the side effect of requiring\n");
-    printf("               all I/O to the file to be filesystem block aligned. Hence\n");
-    printf("               on Linux, unless cachign is enabled, values for '-iosz'\n");
-    printf("               must be a whole multiple of the filesystem block size or\n");
-    printf("               errors will occur.\n\n");
+    printf("    -geniosz <gsz>\n");
+    printf("        The size of each write request when creating the test file(s),\n");
+    printf("        specified in the same manner as for '-fsize'. Must be > 0 and\n");
+    printf("        <= <fsz>. The default is the closest multiple of the filesystem's\n");
+    printf("        optimal I/O size to %'ld MB, or %'ld MB if that cannot be determined.\n\n",
+                    DFLT_GENIOSZ/MB_MULT, DFLT_GENIOSZ/MB_MULT);
+
+#else /* LINUX */
+
+    printf("    -iosz <tsz>\n");
+    printf("        The size of each test I/O request, specified in the same manner as\n");
+    printf("        for '-fsize'. The value must be > 0 and <= %'ld MB. The default is\n",
+                    MAX_IOSZ/MB_MULT );
+    printf("        %'ld MB.\n\n", DFLT_IOSZ/MB_MULT);
+
+    printf("        When testing a block or raw device, the value must be a multiple of\n");
+    printf("        the device's block size, as reported by 'stat', or the test will\n");
+    printf("        fail.\n\n");
+
+    printf("    NOTE:\n");
+    printf("        On Linux, caching is disabled by opening the file with the O_DIRECT\n");
+    printf("        flag. This has the side effect of requiring all I/O to the file to be\n");
+    printf("        filesystem block aligned. Hence on Linux, unless caching is enabled,\n");
+    printf("        the value for '-iosz' must be a multiple of the filesystem's block size\n");
+    printf("        the test will fail.\n\n");
+
+    printf("    -geniosz <gsz>\n");
+    printf("        The size of each write request when creating the test file(s),\n");
+    printf("        specified in the same manner as for '-fsize'. Must be > 0 and\n");
+    printf("        <= <fsz>. The default is %'ld MB.\n\n",
+                    DFLT_GENIOSZ/MB_MULT);
 #endif /* LINUX */
 
-    printf("    -nodsync   Normally the test file(s) are opened with O_DSYNC. If\n");
-    printf("               this option is specified then that flag will not\n");
-    printf("               be used.\n\n");
+    printf("    -dur <tdur>\n");
+    printf("        The duration of the measured part of the test in seconds. Must be\n");
+    printf("        between %'d and %'d, the default is %'d\n\n",
+                    MIN_DUR, MAX_DUR, DFLT_DUR);
 
-    printf("    -nofsync   If '-nodsync' is specified then at the end of a write\n");
-    printf("               test each thread will call the platform equivalent of\n");
-    printf("               fdatasync() on the file. If this option is specified\n");
-    printf("               then that call is not made.\n\n");
+    printf("    -ramp <tramp>\n");
+    printf("        The ramp up/down time, before/after the measured part of the test,\n");
+    printf("        in seconds. Must be between %'d and %'d, the default is %'d.\n\n",
+                    MIN_RAMP, MAX_RAMP, DFLT_RAMP);
 
-    printf("        NOTES:\n");
-    printf("               - The measured time for write tests includes the time for\n");
-    printf("                 any 'fdatasync()' and/or 'close()' that is part of the test.\n");
-    printf("               - Due to an implementation quirk, the CPU time reported for\n");
-    printf("                 write tests does not include any 'fdatasync()' or 'close()'\n");
-    printf("                 operations.\n\n");
+    printf("    NOTE:\n");
+    printf("        The default measurement duration and ramp times have been chosen to\n");
+    printf("        give good results across a wide range of storage systems.\n\n");
+
+    printf("    -threads <nthr>\n");
+    printf("        The number of concurrent threads to use for the test. The minimum\n");
+    printf("        (and default) value is 1 and the maximum is %d. Threads are numbered\n",
+                    MAX_THREADS);
+    printf("        from 0. With fast devices (SSDs and similar) you will likely need to\n");
+    printf("        use multiple threads in order to accurately measure the device's\n");
+    printf("        maximum performance. For rotational devices (regular HDDs) using\n");
+    printf("        multiple threads may be counter productive as it could result in\n");
+    printf("        contention (though the results may still be interesting).\n\n");
+
+    printf("    -cpu\n");
+    printf("        Displays CPU usage information for the measurement part of each test.\n\n");
+
+    printf("    -verbose\n");
+    printf("        Displays additional, possibly interesting, information during\n");
+    printf("        execution. Primarily per thread metrics.\n\n");
+
+    printf("The following options are for special usage only. The objective of this tool\n");
+    printf("is to measure the performance of storage hardware (as far as is possible\n");
+    printf("given that a filesystem is interposed between the test program and the\n");
+    printf("hardware). As a result certain OS features are used by default to try to\n");
+    printf("achieve this. The setings below allow you to change aspects of the program's\n");
+    printf("behaviour. This may be interesting but the results so achieved should be\n");
+    printf("interpreted with caution.\n\n");
+
+    printf("    -1file [<usrfpath>]\n");
+    printf("       Normally each test thread creates its own test file in order to avoid\n");
+    printf("       any filesystem contention that might arise from multiple threads\n");
+    printf("       performing I/O on the same file. When this option is specified, all\n");
+    printf("       threads share the same test file. Each thread opens the file separately\n");
+    printf("       but I/O operations are not synchronised between the threads.\n\n");
+
+    printf("       Normally the test file is created automatically, but if the optional\n");
+    printf("       <usrfpath> value is specified then that pre-existing file is used\n");
+    printf("       instead.\n\n");
+
+    printf("       <usrfpath> may refer to a block special or character special (raw) file\n");
+    printf("       (device). In this case only read tests will be allowed.\n\n");
+
+    printf("    NOTES:\n");
+    printf("        - If a user file is specified it must be at least %'ld GB in size.\n\n",
+                      MIN_FSIZE/GB_MULT);
+
+    printf("        - If write testing is being performed (the default) then the contents\n");
+    printf("          of the user file will be overwritten without warning!\n\n");
+
+    printf("        - The user file will not be removed at the end of the test.\n\n");
+
+    printf("        - Use of <usrfpath> is mutually exclusive with the '-file', '-geniosz'\n");
+    printf("          and '-nopreallocate' options.\n\n");
+
+    printf("        - The default for '-fsize' is the size of the user file. If you\n");
+    printf("          explicitly specify a value for '-fsize' it must be <= the actual\n");
+    printf("          file size. If the user file is larger than %'ld GB then the tests\n",
+                      MAX_FSIZE/GB_MULT);
+    printf("          will fail unless you use '-fsize' to limit the maximum offset\n");
+    printf("          within the file.\n\n");
+
+    printf("        - Testing a block or raw device will likely require you to execute this\n");
+    printf("          utility as 'root'.\n\n");
+
+    printf("        - You may not be able to test a block device if there is a filesystem\n");
+    printf("          currently mounted on it.\n\n");
+
+    printf("        - You may not be able to test a raw device if there is a filesystem\n");
+    printf("          currently mounted on its corresponding block device.\n\n");
+
+    printf("    -nopreallocate\n");
+    printf("        Normally space for the test file(s) is pre-allocated (contiguously\n");
+    printf("        if possible) using OS APIs. If this option is specified then the space\n");
+    printf("        will not be pre-allocated.\n\n");
+
+    printf("        Not allowed when testing a block or raw device.\n\n");
+
+#if ! defined(LINUX)
+    printf("    -rdahead\n");
+    printf("        Normally OS read ahead is disabled for the test file(s). If this\n");
+    printf("        option is specified then read ahead will not be explicitly disabled.\n\n");
+
+    printf("        Not allowed when testing a block or raw device.\n\n");
+
+#endif /* ! Linux */
+
+    printf("    -cache\n");
+    printf("        Normally OS filesystem caching is disabled for the test file(s). If\n");
+    printf("        this option is specified then caching will not be explicitly disabled.\n\n");
+
+    printf("        Not allowed when testing a block or raw device.\n\n");
+
+#if defined(LINUX)
+    printf("    IMPORTANT NOTE:\n");
+    printf("        On Linux, OS caching is disabled by opening the file(s) with the\n");
+    printf("        O_DIRECT flag. This has the side effect of requiring all I/O to the\n");
+    printf("        file(s) to be filesystem block aligned. Hence on Linux, unless caching\n");
+    printf("        is enabled, values for '-iosz' must be a multiple of the filesystem\n");
+    printf("        block size or the test will fail.\n\n");
+
+#endif /* LINUX */
+
+    printf("    -nodsync\n");
+    printf("        Normally the test file(s) are opened with the O_DSYNC flag. If this\n");
+    printf("        option is specified then that flag will not be used.\n\n");
+
+    printf("        Not allowed when testing a block or raw device.\n\n");
+
+    printf("    -nofsync\n");
+    printf("        If '-nodsync' is specified, then at the end of a write test each thread\n");
+    printf("        will call the platform equivalent of fdatasync() on the file. If this\n");
+    printf("        option is specified then that call is not made.\n\n");
+
+    printf("        Not allowed when testing a block or raw device.\n\n");
+
+    printf("    NOTES:\n");
+    printf("        - The measured time for write tests includes the time for any 'close()'\n");
+    printf("          or 'fdatasync()' operation that is part of the test.\n\n");
+
+    printf("        - Due to an implementation quirk, the CPU time reported for write tests\n");
+    printf("          does not include any 'fdatasync()' or 'close()' operations.\n\n");
 
     exit( 100 );
 } // usage
@@ -644,6 +797,10 @@ parseArgs(
     int foundCache = 0, foundNodsync = 0, foundNofsync = 0, foundThreads = 0;
     int foundCpu = 0, foundDur = 0, foundRamp = 0;
     struct stat sbuf;
+#if defined( ALLOW_RAW )
+    int fd;
+    long long fsz;
+#endif /* ALLOW_RAW */
 
     while (  argno < argc  )
     {
@@ -1009,11 +1166,143 @@ parseArgs(
 
     ctxt->tfname = ctxt->fname;
 
-    if (  (ctxt->fsz < MIN_FSIZE) || (ctxt->fsz > MAX_FSIZE)  )
+    if (  foundFsize && ( (ctxt->fsz < MIN_FSIZE) || (ctxt->fsz > MAX_FSIZE) )  )
     {
         fprintf( stderr, "\n*** Invalid value for '-fsize'\n" );
         return 1;
     }
+
+    if (  ctxt->usrfile  )
+    {
+#if defined( ALLOW_RAW )
+        errno = 0;
+        fd = open( ctxt->fname, O_RDONLY );
+        if (  fd < 0  )
+        {
+            fprintf( stderr, "\n*** Unable to open '%s'  - %d (%s)\n", ctxt->fname,
+                     errno, strerror(errno) );
+            return 1;
+        }
+        errno = 0;
+        if (  fstat( fd, &sbuf )  )
+        {
+            fprintf( stderr, "\n*** Unable to stat '%s'   - %d (%s)\n", ctxt->fname,
+                     errno, strerror(errno) );
+            close( fd );
+            return 1;
+        }
+        if (  ! ( sbuf.st_mode & S_IFREG ) &&
+              ! ( sbuf.st_mode & S_IFCHR ) &&
+              ! ( sbuf.st_mode & S_IFBLK )  )
+        {
+            fprintf( stderr, "\n*** '%s' is not a regular, block or raw file\n", ctxt->fname );
+            close( fd );
+            return 1;
+        }
+        if (  ( sbuf.st_mode & S_IFCHR ) || ( sbuf.st_mode & S_IFBLK )  )
+        {
+            ctxt->raw = 1;
+            if (  sbuf.st_mode & S_IFBLK  )
+                ctxt->blk = 1;
+            if (  foundRdahead  )
+            {
+                fprintf( stderr, "\n*** '%s' is a block or raw file, '-rdahead' not allowed\n", ctxt->fname );
+                close( fd );
+                return 1;
+            }
+            if (  foundCache  )
+            {
+                fprintf( stderr, "\n*** '%s' is a block or raw file, '-cache' not allowed\n", ctxt->fname );
+                close( fd );
+                return 1;
+            }
+            if (  foundNopreallocate  )
+            {
+                fprintf( stderr, "\n*** '%s' is a block or raw file, '-nopreallocate' not allowed\n", ctxt->fname );
+                close( fd );
+                return 1;
+            }
+            if (  foundNodsync  )
+            {
+                fprintf( stderr, "\n*** '%s' is a block or raw file, '-nodsync' not allowed\n", ctxt->fname );
+                close( fd );
+                return 1;
+            }
+            if (  foundNofsync  )
+            {
+                fprintf( stderr, "\n*** '%s' is a block or raw file, '-nofsync' not allowed\n", ctxt->fname );
+                close( fd );
+                return 1;
+            }
+            if (  ctxt->noread  )
+            {
+                fprintf( stderr, "\n*** '%s' is a block or raw file, only reads allowed but '-noread' specified\n", ctxt->fname );
+                close( fd );
+                return 1;
+            }
+            else
+                ctxt->nowrite = foundNowrite = 1;
+
+            ctxt->blksz = sbuf.st_blksize;
+            if (  foundIosz && ( ( ctxt->iosz % ctxt->blksz ) != 0 )  )
+            {
+                fprintf( stderr, "\n*** '%s' is a block or raw file, value for '-iosz' must be a multiple of %'ld\n",
+                         ctxt->fname, ctxt->blksz );
+                close( fd );
+                return 1;
+            }
+
+            fsz = findRawSize( fd, ctxt->blksz );
+            if (  fsz <= 0  )
+            {
+                fprintf( stderr, "*** Unable to determine size for '%s'\n", ctxt->fname );
+                close( fd );
+                return 1;
+            }
+
+            close( fd );
+        }
+        else
+            fsz = sbuf.st_size;
+#else /* !ALLOW_RAW */
+        errno = 0;
+        if (  stat( ctxt->fname, &sbuf )  )
+        {
+            fprintf( stderr, "\n*** Unable to stat '%s'   - %d (%s)\n", ctxt->fname,
+                     errno, strerror(errno) );
+            return 1;
+        }
+        if (  ! ( sbuf.st_mode & S_IFREG )  )
+        {
+            fprintf( stderr, "\n*** '%s' is not a regular file\n", ctxt->fname );
+            return 1;
+        }
+        fsz = sbuf.st_size;
+#endif /* ALLOW_RAW */
+        if (  foundFsize  )
+        {
+            if (  ctxt->fsz > fsz  )
+            {
+                fprintf( stderr, "\n*** Value specified for '-fsize' (%'ld) is greater than size of '%s'\n",
+                         ctxt->fsz, ctxt->fname );
+                return 1;
+            }
+        }
+        else
+        {
+            if (  fsz < MIN_FSIZE  )
+            {
+                fprintf( stderr, "\n*** File size (%'lld) less than %'ld\n", fsz, (long)MIN_FSIZE );
+                return 1;
+            }
+            if (  fsz > MAX_FSIZE  )
+            {
+                fprintf( stderr, "\n*** File size (%'lld) greater than %'ld\n", fsz, (long)MAX_FSIZE );
+                return 1;
+            }
+            ctxt->fsz = (long)fsz;
+        }
+    } // usrfile
 
     if (  (ctxt->geniosz < 1) || (ctxt->geniosz > ctxt->fsz)  )
     {
@@ -1021,35 +1310,12 @@ parseArgs(
         return 1;
     }
 
-    if (  ctxt->usrfile  )
+    if (  foundFile && found1file && ! foundUsrfile  )
     {
-        if (  stat( ctxt->fname, &sbuf )  )
+        if (  stat( ctxt->fname, &sbuf ) == 0  )
         {
-            fprintf( stderr, "\n*** File '%s' does not exist\n", ctxt->fname );
+            fprintf( stderr, "\n*** File '%s' already exists\n", ctxt->fname );
             return 1;
-        }
-        if (  foundFsize  )
-        {
-            if (  ctxt->fsz > sbuf.st_size  )
-            {
-                fprintf( stderr, "\n*** Value specified for '-fsize' is larger than the actual file size (%ld)\n",
-                         (long)sbuf.st_size );
-                return 1;
-            }
-        }
-        else
-        {
-            if (  sbuf.st_size < MIN_FSIZE  )
-            {
-                fprintf( stderr, "\n*** File size (%ld) less than %ld\n", (long)sbuf.st_size, (long)MIN_FSIZE );
-                return 1;
-            }
-            if (  sbuf.st_size > MAX_FSIZE  )
-            {
-                fprintf( stderr, "\n*** File size (%ld) greater than %ld\n", (long)sbuf.st_size, (long)MAX_FSIZE );
-                return 1;
-            }
-            ctxt->fsz = sbuf.st_size;
         }
     }
 
@@ -1171,6 +1437,22 @@ openFile(
         return 1;
     }
 
+#if defined( ALLOW_RAW )
+    if (  ctxt->raw  )
+        flags = O_RDONLY;
+    else
+    {
+        flags = O_RDWR;
+        if (  create  )
+            flags |= O_CREAT|O_EXCL;
+        if (  ! ctxt->nodsync  )
+            flags |= O_DSYNC;
+#if defined(LINUX)
+        if (  ! ctxt->cache  )
+            flags |= O_DIRECT;
+#endif /* Linux */
+    }
+#else /* ! ALLOW_RAW */
     flags = O_RDWR;
     if (  create  )
         flags |= O_CREAT|O_EXCL;
@@ -1180,6 +1462,7 @@ openFile(
     if (  ! ctxt->cache  )
         flags |= O_DIRECT;
 #endif /* Linux */
+#endif /* ! ALLOW_RAW */
     errno = 0;
     ctxt->fd = open( ctxt->tfname, flags, 0600 );
     if (  ctxt->fd < 0  )
@@ -1193,19 +1476,24 @@ openFile(
         return 1;
     }
 
-    if (  fstatfs( ctxt->fd, &fsbuf ) == 0  )
+#if defined( ALLOW_RAW )
+    if (  ! ctxt->raw  )
     {
-        if ( fsbuf.f_bsize > 0 )
-            ctxt->blksz = fsbuf.f_bsize;
+#endif /* ALLOW_RAW */
+        if (  fstatfs( ctxt->fd, &fsbuf ) == 0  )
+        {
+            if ( fsbuf.f_bsize > 0 )
+                ctxt->blksz = fsbuf.f_bsize;
 #if ! defined(LINUX)
-        if ( fsbuf.f_iosize > 0 )
-            ctxt->optiosz = fsbuf.f_iosize;
-#else /* LINUX */
-        if ( fsbuf.f_bsize > 0 )
-            ctxt->optiosz = fsbuf.f_bsize;
-#endif /* LINUX */
+            if ( fsbuf.f_iosize > 0 )
+                ctxt->optiosz = fsbuf.f_iosize;
+#endif /* ! LINUX */
+        }
+#if defined( ALLOW_RAW )
     }
+#endif /* ALLOW_RAW */
 
+#if ! defined(LINUX)
     if (  ctxt->verbose && ! ctxt->usriosz && ! ctxt->optiosz  )
     {
         if (  ctxt->threads > 1  )
@@ -1215,35 +1503,45 @@ openFile(
             printf("Unable to determine optimal I/O size so using %'ld bytes\n",
                     DFLT_IOSZ );
     }
+#endif /* ! LINUX */
+    if (  ! ctxt->optiosz  )
+        ctxt->optiosz = DFLT_IOSZ;
 
 #if ! defined(LINUX)
-    if (  ! ctxt->rdahead  )
+#if defined( ALLOW_RAW )
+    if ( ! ctxt->raw  )
     {
-        if (  fcntl( ctxt->fd, F_RDAHEAD, 0 )  )
+#endif /* ALLOW_RAW */
+        if (  ! ctxt->rdahead  )
         {
-            if (  ctxt->threads > 1  )
-                fprintf( stderr, "*** Thread %d: unable to disable read-ahead for '%s'\n",
-                         ctxt->threadno, ctxt->tfname );
-            else
-                fprintf( stderr, "*** unable to disable read-ahead for '%s'\n",
-                         ctxt->tfname );
-            return 1;
+            if (  fcntl( ctxt->fd, F_RDAHEAD, 0 )  )
+            {
+                if (  ctxt->threads > 1  )
+                    fprintf( stderr, "*** Thread %d: unable to disable read-ahead for '%s'\n",
+                             ctxt->threadno, ctxt->tfname );
+                else
+                    fprintf( stderr, "*** unable to disable read-ahead for '%s'\n",
+                             ctxt->tfname );
+                return 1;
+            }
         }
-    }
-
-    if (  ! ctxt->cache  )
-    {
-        if (  fcntl( ctxt->fd, F_NOCACHE, 1 )  )
+    
+        if (  ! ctxt->cache  )
         {
-            if (  ctxt->threads > 1  )
-                fprintf( stderr, "*** Thread %d: unable to disable caching for '%s'\n",
-                         ctxt->threadno, ctxt->tfname );
-            else
-                fprintf( stderr, "*** : Unable to disable caching for '%s'\n",
-                         ctxt->tfname );
-            return 1;
+            if (  fcntl( ctxt->fd, F_NOCACHE, 1 )  )
+            {
+                if (  ctxt->threads > 1  )
+                    fprintf( stderr, "*** Thread %d: unable to disable caching for '%s'\n",
+                             ctxt->threadno, ctxt->tfname );
+                else
+                    fprintf( stderr, "*** : Unable to disable caching for '%s'\n",
+                             ctxt->tfname );
+                return 1;
+            }
         }
+#if defined( ALLOW_RAW )
     }
+#endif /* ALLOW_RAW */
 #endif /* macOS */
 
     if ( ! ctxt->usrfile && ! ctxt->nopreallocate  )
@@ -1312,7 +1610,7 @@ openFile(
             }
         }
 #endif /* macOS */
-    }
+    } // pre-allocate
 
     return 0;
 } // openFile
@@ -1395,6 +1693,42 @@ initContexts(
             )
 {
     int i, l, ret = 0;
+#if defined( ALLOW_RAW )
+    int fd;
+    struct stat sbuf;
+#endif /* ALLOW_RAW */
+
+#if defined( ALLOW_RAW )
+    if (  mainctxt->raw  )
+    {
+        errno = 0;
+        fd = open( mainctxt->fname, O_RDONLY, 0 );
+        if (  fd < 0  )
+        {
+            fprintf( stderr, "*** Unable to open '%s' - %d (%s)\n",
+                     mainctxt->fname, errno, strerror(errno) );
+            return 1;
+        }
+        if (  fstat( fd, &sbuf )  )
+        {
+            fprintf( stderr, "*** Unable to stat '%s' - %d (%s)\n",
+                     mainctxt->fname, errno, strerror(errno) );
+            close( fd );
+            return 1;
+        }
+        mainctxt->blksz = sbuf.st_blksize;
+        mainctxt->optiosz = sbuf.st_blksize;
+        mainctxt->fsz = findRawSize( fd, mainctxt->blksz );
+        if (  mainctxt->fsz <= 0  )
+        {
+            fprintf( stderr, "*** Unable to determine size for '%s'\n",
+                     mainctxt->fname );
+            close( fd );
+            return 1;
+        }
+        close( fd );
+    }
+#endif /* ALLOW_RAW */
 
     if ( mainctxt->verbose && (mainctxt->threads > 1) )
         printf("\n");
@@ -2604,7 +2938,9 @@ createFile(
         if (  ctxt->nopreallocate  )
             printf("Preallocation is disabled\n\n");
         printf("Filesystem block size is %'ld bytes\n", ctxt->blksz);
+#if ! defined(LINUX)
         printf("Filesystem optimal I/O size is %'ld bytes\n", ctxt->optiosz);
+#endif /* LINUX */
         printf("\nFile generation block size is %'ld bytes\n\n", ctxt->geniosz);
 
         gettimeofday( &pstart, NULL );
@@ -2719,8 +3055,17 @@ main(
     
         if (  (ret = initContexts( &mctxt, tctxt, mctxt.threads )) == 0  )
         {
+#if defined( ALLOW_RAW )
+            printf("\n%s block size is %'ld bytes\n", mctxt.raw?"Device":"Filesystem", mctxt.blksz);
+#if ! defined(LINUX)
+            printf("%s optimal I/O size is %'ld bytes\n", mctxt.raw?"Device":"Filesystem", mctxt.optiosz);
+#endif /* LINUX */
+#else /* ! ALLOW_RAW */
             printf("\nFilesystem block size is %'ld bytes\n", mctxt.blksz);
+#if ! defined(LINUX)
             printf("Filesystem optimal I/O size is %'ld bytes\n", mctxt.optiosz);
+#endif /* LINUX */
+#endif /* ! ALLOW_RAW */
             if (  ! mctxt.usrfile  )
                 printf("\nFile generation block size is %'ld bytes\n", mctxt.geniosz);
             printf("\nTest block size is %'ld bytes\n\n", mctxt.iosz);

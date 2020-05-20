@@ -3,7 +3,7 @@
 A macOS & Linux utility for performing storage I/O performance tests. As well as the main **iops** utility there is also a useful **statfs** utility and a convenience script (**runiops**).
 
 ## Documentation
-Please see the [User Guide](./UserGuide.md). Both **iops** and **statfs** also provide comprehensive online help.
+Please see the online help text for [macOS](./HelpMacOS.txt) and [Linux](./HelpLinux.txt) for comprehensive information.
 
 ## License
 

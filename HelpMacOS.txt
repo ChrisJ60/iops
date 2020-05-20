@@ -1,0 +1,181 @@
+
+IOPS version 2.2
+
+Usage:
+
+    iops { s[equential] | r[andom] } [-file <fpath>] [-fsize <fsz>] [-cpu]
+         [-iosz <tsz>] [-dur <tdur>] [-ramp <tramp>] [-noread | -nowrite]
+         [-geniosz <gsz>] [-threads <nthr>] [-verbose] [-1file [<usrfpath>]]
+         [-nopreallocate] [-rdahead] [-cache] [-nodysnc [-nofsync]]
+
+    iops c[reate] [-file <fpath>] [-fsize <fsz>] [-geniosz <gsz>]
+         [-nopreallocate] [-cpu]
+
+    iops h[elp]
+
+Tests the I/O capability of storage devices, filesystems and OS.
+
+Parameters are:
+
+  s[equential]
+     Performs a sequential I/O test.
+
+  r[andom]
+     Performs a random I/O test.
+
+  c[reate]
+     Creates a file suitable for later use with the '-1file' option.
+
+  h[elp]
+     Display full help (this text).
+
+    -file <fpath>
+        Path of the file to use for testing. A separate file named 'fpath-nn'
+        will be created for each test thread, where 'nn' is the thread number,
+        unless the '-1file' option is used. The default value for <fpath> is
+        'iopsdata'.
+
+        Files that will be created must not already exist. Any files created
+        will be removed automatically.
+
+    -fsize <fsz>
+        When creating test files, the size of each test file. When using an
+        existing file, the maximum offset within the file to be used when
+        testing. The value must be in the range 1 GB to 10 GB. When creating
+        files the default is 1 GB.
+
+        The size is specified in bytes but it can be specified in kilobytes
+        (1024 bytes), megabytes (1024*1024 bytes) or gigabytes (1024*1024*1024
+        bytes) by using a suffix of k, m or g on the value.
+
+    -iosz <tsz>
+        The size of each test I/O request, specified in the same manner as
+        for '-fsize'. The value must be > 0 and <= 32 MB. The default is
+        the optimal I/O size for the filesystem containing the test file(s)
+        or 1 MB if that cannot be determined.
+
+        When testing a block or raw device, the value must be a multiple of
+        the device's block size, as reported by 'stat', or the test will
+        fail.
+
+    -geniosz <gsz>
+        The size of each write request when creating the test file(s),
+        specified in the same manner as for '-fsize'. Must be > 0 and
+        <= <fsz>. The default is the closest multiple of the filesystem's
+        optimal I/O size to 32 MB, or 32 MB if that cannot be determined.
+
+    -dur <tdur>
+        The duration of the measured part of the test in seconds. Must be
+        between 10 and 3,600, the default is 30
+
+    -ramp <tramp>
+        The ramp up/down time, before/after the measured part of the test,
+        in seconds. Must be between 0 and 60, the default is 10.
+
+    NOTE:
+        The default measurement duration and ramp times have been chosen to
+        give good results across a wide range of storage systems.
+
+    -threads <nthr>
+        The number of concurrent threads to use for the test. The minimum
+        (and default) value is 1 and the maximum is 64. Threads are numbered
+        from 0. With fast devices (SSDs and similar) you will likely need to
+        use multiple threads in order to accurately measure the device's
+        maximum performance. For rotational devices (regular HDDs) using
+        multiple threads may be counter productive as it could result in
+        contention (though the results may still be interesting).
+
+    -cpu
+        Displays CPU usage information for the measurement part of each test.
+
+    -verbose
+        Displays additional, possibly interesting, information during
+        execution. Primarily per thread metrics.
+
+The following options are for special usage only. The objective of this tool
+is to measure the performance of storage hardware (as far as is possible
+given that a filesystem is interposed between the test program and the
+hardware). As a result certain OS features are used by default to try to
+achieve this. The setings below allow you to change aspects of the program's
+behaviour. This may be interesting but the results so achieved should be
+interpreted with caution.
+
+    -1file [<usrfpath>]
+       Normally each test thread creates its own test file in order to avoid
+       any filesystem contention that might arise from multiple threads
+       performing I/O on the same file. When this option is specified, all
+       threads share the same test file. Each thread opens the file separately
+       but I/O operations are not synchronised between the threads.
+
+       Normally the test file is created automatically, but if the optional
+       <usrfpath> value is specified then that pre-existing file is used
+       instead.
+
+       <usrfpath> may refer to a block special or character special (raw) file
+       (device). In this case only read tests will be allowed.
+
+    NOTES:
+        - If a user file is specified it must be at least 1 GB in size.
+
+        - If write testing is being performed (the default) then the contents
+          of the user file will be overwritten without warning!
+
+        - The user file will not be removed at the end of the test.
+
+        - Use of <usrfpath> is mutually exclusive with the '-file', '-geniosz'
+          and '-nopreallocate' options.
+
+        - The default for '-fsize' is the size of the user file. If you
+          explicitly specify a value for '-fsize' it must be <= the actual
+          file size. If the user file is larger than 10 GB then the tests
+          will fail unless you use '-fsize' to limit the maximum offset
+          within the file.
+
+        - Testing a block or raw device will likely require you to execute this
+          utility as 'root'.
+
+        - You may not be able to test a block device if there is a filesystem
+          currently mounted on it.
+
+        - You may not be able to test a raw device if there is a filesystem
+          currently mounted on its corresponding block device.
+
+    -nopreallocate
+        Normally space for the test file(s) is pre-allocated (contiguously
+        if possible) using OS APIs. If this option is specified then the space
+        will not be pre-allocated.
+
+        Not allowed when testing a block or raw device.
+
+    -rdahead
+        Normally OS read ahead is disabled for the test file(s). If this
+        option is specified then read ahead will not be explicitly disabled.
+
+        Not allowed when testing a block or raw device.
+
+    -cache
+        Normally OS filesystem caching is disabled for the test file(s). If
+        this option is specified then caching will not be explicitly disabled.
+
+        Not allowed when testing a block or raw device.
+
+    -nodsync
+        Normally the test file(s) are opened with the O_DSYNC flag. If this
+        option is specified then that flag will not be used.
+
+        Not allowed when testing a block or raw device.
+
+    -nofsync
+        If '-nodsync' is specified, then at the end of a write test each thread
+        will call the platform equivalent of fdatasync() on the file. If this
+        option is specified then that call is not made.
+
+        Not allowed when testing a block or raw device.
+
+    NOTES:
+        - The measured time for write tests includes the time for any 'close()'
+          or 'fdatasync()' operation that is part of the test.
+
+        - Due to an implementation quirk, the CPU time reported for write tests
+          does not include any 'fdatasync()' or 'close()' operations.
+
