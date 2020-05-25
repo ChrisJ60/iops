@@ -1,11 +1,12 @@
 
-IOPS version 2.2
+IOPS version 2.3
 
 Usage:
 
     iops { s[equential] | r[andom] } [-file <fpath>] [-fsize <fsz>] [-cpu]
          [-iosz <tsz>] [-dur <tdur>] [-ramp <tramp>] [-noread | -nowrite]
-         [-geniosz <gsz>] [-threads <nthr>] [-verbose] [-1file [<usrfpath>]]
+         [-geniosz <gsz>] [-threads <nthr>] [-verbose]
+         [-1file [<usrfpath> [-rawWrite]]]
          [-nopreallocate] [-cache] [-nodysnc [-nofsync]]
 
     iops c[reate] [-file <fpath>] [-fsize <fsz>] [-geniosz <gsz>]
@@ -105,19 +106,26 @@ achieve this. The setings below allow you to change aspects of the program's
 behaviour. This may be interesting but the results so achieved should be
 interpreted with caution.
 
-    -1file [<usrfpath>]
-       Normally each test thread creates its own test file in order to avoid
-       any filesystem contention that might arise from multiple threads
-       performing I/O on the same file. When this option is specified, all
-       threads share the same test file. Each thread opens the file separately
-       but I/O operations are not synchronised between the threads.
+    -1file [<usrfpath> [-rawWrite]]
+        Normally each test thread creates its own test file in order to avoid
+        any filesystem contention that might arise from multiple threads
+        performing I/O on the same file. When this option is specified, all
+        threads share the same test file. Each thread opens the file separately
+        but I/O operations are not synchronised between the threads.
 
-       Normally the test file is created automatically, but if the optional
-       <usrfpath> value is specified then that pre-existing file is used
-       instead.
+        Normally the test file is created automatically, but if the optional
+        <usrfpath> value is specified then that pre-existing file is used
+        instead.
 
-       <usrfpath> may refer to a block special or character special (raw) file
-       (device). In this case only read tests will be allowed.
+        <usrfpath> may refer to a block special or character special (raw) file
+        (device). In order to perform write tests on a block or raw device you
+        must both (a) set the environment variable named 'IOPSRawWrite' to the
+        value 'YES' and specify the '-rawWrite' option.
+
+    IMPORTANT WARNING:
+        Performing write tests on a block or raw device will irretrievably
+        corrupt any filesystem or other data on the device. YOU HAVE BEEN
+        WARNED!
 
     NOTES:
         - If a user file is specified it must be at least 1 GB in size.
@@ -140,10 +148,12 @@ interpreted with caution.
           utility as 'root'.
 
         - You may not be able to test a block device if there is a filesystem
-          currently mounted on it.
+          currently mounted on it. Even if the OS does not prohibit this you
+          are strongly advised not to do so.
 
         - You may not be able to test a raw device if there is a filesystem
-          currently mounted on its corresponding block device.
+          currently mounted on its corresponding block device. Even if the OS
+          does not prohibit this you are strongly advised not to do so.
 
     -nopreallocate
         Normally space for the test file(s) is pre-allocated (contiguously

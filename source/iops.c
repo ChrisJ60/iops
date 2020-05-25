@@ -43,9 +43,12 @@
  */
 
 #define  PROGNAME         "IOPS"
-#define  VERSION          "2.2"
+#define  VERSION          "2.3"
 
 #define  ALLOW_RAW        1
+#define  ALLOW_RAWWRITE   1
+#define  ENV_RAWWRITE     "IOPSRawWrite"
+#define  ENV_RAWVALUE     "YES"
 
 #define  WAIT_US          10
 #define  MSG_BUFF_SZ      256
@@ -130,7 +133,8 @@ struct s_context
 #if defined( ALLOW_RAW )
     int    raw;
     int    blk;
-#endif
+    int    rawwrite;
+#endif /* ALLOW_RAW */
     int    retcode;
     volatile int crready;
     volatile int rdready;
@@ -207,6 +211,7 @@ context_t mctxt =
     0,
     -1,
 #if defined( ALLOW_RAW )
+    0,
     0,
     0,
 #endif
@@ -404,7 +409,12 @@ usage(
 
     printf("    iops { s[equential] | r[andom] } [-file <fpath>] [-fsize <fsz>] [-cpu]\n");
     printf("         [-iosz <tsz>] [-dur <tdur>] [-ramp <tramp>] [-noread | -nowrite]\n");
+#if defined(ALLOW_RAW) && defined(ALLOW_RAWWRITE)
+    printf("         [-geniosz <gsz>] [-threads <nthr>] [-verbose]\n");
+    printf("         [-1file [<usrfpath> [-rawWrite]]]\n");
+#else  /* ! ALLOW_RAW || ! ALLOW_RAWWRITE */
     printf("         [-geniosz <gsz>] [-threads <nthr>] [-verbose] [-1file [<usrfpath>]]\n");
+#endif /* ! ALLOW_RAW || ! ALLOW_RAWWRITE */
 #if defined(LINUX)
     printf("         [-nopreallocate] [-cache] [-nodysnc [-nofsync]]\n\n");
 #else /* macOS */
@@ -464,9 +474,11 @@ usage(
     printf("        or %'ld MB if that cannot be determined.\n\n",
                     DFLT_IOSZ/MB_MULT);
 
+#if defined(ALLOW_RAW)
     printf("        When testing a block or raw device, the value must be a multiple of\n");
     printf("        the device's block size, as reported by 'stat', or the test will\n");
     printf("        fail.\n\n");
+#endif /* ALLOW_RAW */
 
     printf("    -geniosz <gsz>\n");
     printf("        The size of each write request when creating the test file(s),\n");
@@ -483,9 +495,11 @@ usage(
                     MAX_IOSZ/MB_MULT );
     printf("        %'ld MB.\n\n", DFLT_IOSZ/MB_MULT);
 
+#if defined(ALLOW_RAW)
     printf("        When testing a block or raw device, the value must be a multiple of\n");
     printf("        the device's block size, as reported by 'stat', or the test will\n");
     printf("        fail.\n\n");
+#endif /* ALLOW_RAW */
 
     printf("    NOTE:\n");
     printf("        On Linux, caching is disabled by opening the file with the O_DIRECT\n");
@@ -540,19 +554,36 @@ usage(
     printf("behaviour. This may be interesting but the results so achieved should be\n");
     printf("interpreted with caution.\n\n");
 
+#if defined(ALLOW_RAW) && defined(ALLOW_RAWWRITE)
+    printf("    -1file [<usrfpath> [-rawWrite]]\n");
+#else  /* ! ALLOW_RAW || ! ALLOW_RAWWRITE */
     printf("    -1file [<usrfpath>]\n");
-    printf("       Normally each test thread creates its own test file in order to avoid\n");
-    printf("       any filesystem contention that might arise from multiple threads\n");
-    printf("       performing I/O on the same file. When this option is specified, all\n");
-    printf("       threads share the same test file. Each thread opens the file separately\n");
-    printf("       but I/O operations are not synchronised between the threads.\n\n");
+#endif /* ALLOW_RAW */
+    printf("        Normally each test thread creates its own test file in order to avoid\n");
+    printf("        any filesystem contention that might arise from multiple threads\n");
+    printf("        performing I/O on the same file. When this option is specified, all\n");
+    printf("        threads share the same test file. Each thread opens the file separately\n");
+    printf("        but I/O operations are not synchronised between the threads.\n\n");
 
-    printf("       Normally the test file is created automatically, but if the optional\n");
-    printf("       <usrfpath> value is specified then that pre-existing file is used\n");
-    printf("       instead.\n\n");
+    printf("        Normally the test file is created automatically, but if the optional\n");
+    printf("        <usrfpath> value is specified then that pre-existing file is used\n");
+    printf("        instead.\n\n");
 
-    printf("       <usrfpath> may refer to a block special or character special (raw) file\n");
-    printf("       (device). In this case only read tests will be allowed.\n\n");
+#if defined(ALLOW_RAW)
+    printf("        <usrfpath> may refer to a block special or character special (raw) file\n");
+#if ! defined(ALLOW_RAWWRITE)
+    printf("        (device). In this case only read tests will be allowed.\n\n");
+#else /* ALLOW_RAWWRITE */
+    printf("        (device). In order to perform write tests on a block or raw device you\n");
+    printf("        must both (a) set the environment variable named 'IOPSRawWrite' to the\n");
+    printf("        value 'YES' and specify the '-rawWrite' option.\n\n");
+
+    printf("    IMPORTANT WARNING:\n");
+    printf("        Performing write tests on a block or raw device will irretrievably\n");
+    printf("        corrupt any filesystem or other data on the device. YOU HAVE BEEN\n");
+    printf("        WARNED!\n\n");
+#endif /* ALLOW_RAWWRITE */
+#endif /* ALLOW_RAW */
 
     printf("    NOTES:\n");
     printf("        - If a user file is specified it must be at least %'ld GB in size.\n\n",
@@ -573,28 +604,36 @@ usage(
     printf("          will fail unless you use '-fsize' to limit the maximum offset\n");
     printf("          within the file.\n\n");
 
+#if defined(ALLOW_RAW)
     printf("        - Testing a block or raw device will likely require you to execute this\n");
     printf("          utility as 'root'.\n\n");
 
     printf("        - You may not be able to test a block device if there is a filesystem\n");
-    printf("          currently mounted on it.\n\n");
+    printf("          currently mounted on it. Even if the OS does not prohibit this you\n");
+    printf("          are strongly advised not to do so.\n\n");
 
     printf("        - You may not be able to test a raw device if there is a filesystem\n");
-    printf("          currently mounted on its corresponding block device.\n\n");
+    printf("          currently mounted on its corresponding block device. Even if the OS\n");
+    printf("          does not prohibit this you are strongly advised not to do so.\n\n");
+#endif /* ALLOW_RAW */
 
     printf("    -nopreallocate\n");
     printf("        Normally space for the test file(s) is pre-allocated (contiguously\n");
     printf("        if possible) using OS APIs. If this option is specified then the space\n");
     printf("        will not be pre-allocated.\n\n");
 
+#if defined(ALLOW_RAW)
     printf("        Not allowed when testing a block or raw device.\n\n");
+#endif /* ALLOW_RAW */
 
 #if ! defined(LINUX)
     printf("    -rdahead\n");
     printf("        Normally OS read ahead is disabled for the test file(s). If this\n");
     printf("        option is specified then read ahead will not be explicitly disabled.\n\n");
 
+#if defined(ALLOW_RAW)
     printf("        Not allowed when testing a block or raw device.\n\n");
+#endif /* ALLOW_RAW */
 
 #endif /* ! Linux */
 
@@ -602,7 +641,9 @@ usage(
     printf("        Normally OS filesystem caching is disabled for the test file(s). If\n");
     printf("        this option is specified then caching will not be explicitly disabled.\n\n");
 
+#if defined(ALLOW_RAW)
     printf("        Not allowed when testing a block or raw device.\n\n");
+#endif /* ALLOW_RAW */
 
 #if defined(LINUX)
     printf("    IMPORTANT NOTE:\n");
@@ -618,14 +659,18 @@ usage(
     printf("        Normally the test file(s) are opened with the O_DSYNC flag. If this\n");
     printf("        option is specified then that flag will not be used.\n\n");
 
+#if defined(ALLOW_RAW)
     printf("        Not allowed when testing a block or raw device.\n\n");
+#endif /* ALLOW_RAW */
 
     printf("    -nofsync\n");
     printf("        If '-nodsync' is specified, then at the end of a write test each thread\n");
     printf("        will call the platform equivalent of fdatasync() on the file. If this\n");
     printf("        option is specified then that call is not made.\n\n");
 
+#if defined(ALLOW_RAW)
     printf("        Not allowed when testing a block or raw device.\n\n");
+#endif /* ALLOW_RAW */
 
     printf("    NOTES:\n");
     printf("        - The measured time for write tests includes the time for any 'close()'\n");
@@ -795,11 +840,11 @@ parseArgs(
     int foundNoread = 0, foundNowrite = 0;
     int foundGeniosz = 0, foundNopreallocate = 0, foundRdahead = 0, foundUsrfile = 0;
     int foundCache = 0, foundNodsync = 0, foundNofsync = 0, foundThreads = 0;
-    int foundCpu = 0, foundDur = 0, foundRamp = 0;
+    int foundCpu = 0, foundDur = 0, foundRamp = 0, foundRawwrite = 0;
+    long long fsz;
     struct stat sbuf;
 #if defined( ALLOW_RAW )
     int fd;
-    long long fsz;
 #endif /* ALLOW_RAW */
 
     while (  argno < argc  )
@@ -866,6 +911,25 @@ parseArgs(
             }
         }
         else
+#if defined(ALLOW_RAW) && defined(ALLOW_RAWWRITE)
+        if (  strcmp( argv[argno], "-rawWrite" ) == 0  )
+        {
+            if (  foundRawwrite  )
+            {
+                fprintf( stderr, "\n*** Multiple '-rawWrite' options not allowed\n" );
+                return 1;
+            }
+            foundRawwrite = 1;
+            if (  ctxt->rawwrite < 0  )
+                ctxt->rawwrite = 1;
+            else
+            {
+                fprintf( stderr, "\n*** Writing to block and raw devices is not enabled\n" );
+                return 1;
+            }
+        }
+        else
+#endif /* ALLOW_RAW && ALLOW_RAWWRITE */
         if (  strcmp( argv[argno], "-cpu" ) == 0  )
         {
             if (  foundCpu  )
@@ -1175,6 +1239,8 @@ parseArgs(
     if (  ctxt->usrfile  )
     {
 #if defined( ALLOW_RAW )
+        if (  ctxt->rawwrite < 0  )
+            ctxt->rawwrite = 0;
         errno = 0;
         fd = open( ctxt->fname, O_RDONLY );
         if (  fd < 0  )
@@ -1234,14 +1300,39 @@ parseArgs(
                 close( fd );
                 return 1;
             }
-            if (  ctxt->noread  )
+            if (  ctxt->noread && ! ctxt->rawwrite  )
             {
-                fprintf( stderr, "\n*** '%s' is a block or raw file, only reads allowed but '-noread' specified\n", ctxt->fname );
+                fprintf( stderr, "\n*** '%s' is a block or raw file, raw writes are not enabled and '-noread' specified\n",
+                         ctxt->fname );
                 close( fd );
                 return 1;
             }
-            else
-                ctxt->nowrite = foundNowrite = 1;
+            if (  ctxt->noread  )
+            {
+#if ! defined(ALLOW_RAWWRITE)
+                fprintf( stderr, "\n*** '%s' is a block or raw file, raw writes are not allowed and '-noread' specified\n",
+                         ctxt->fname );
+                close( fd );
+                return 1;
+#else  /* ALLOW_RAWWRITE */
+                if (  ! ctxt->rawwrite  )
+                {
+                    fprintf( stderr, "\n*** '%s' is a block or raw file, raw writes are not enabled and '-noread' specified\n",
+                             ctxt->fname );
+                    close( fd );
+                    return 1;
+                }
+#endif /* ALLOW_RAWWRITE */
+            }
+#if ! defined(ALLOW_RAWWRITE)
+            ctxt->nowrite = foundNowrite = 1;
+#else  /* ALLOW_RAWWRITE */
+            if (  ! ctxt->nowrite  )
+            {
+                if (  ! ctxt->rawwrite  )
+                    ctxt->nowrite = foundNowrite = 1;
+            }
+#endif /* ALLOW_RAWWRITE */
 
             ctxt->blksz = sbuf.st_blksize;
             if (  foundIosz && ( ( ctxt->iosz % ctxt->blksz ) != 0 )  )
@@ -1439,7 +1530,14 @@ openFile(
 
 #if defined( ALLOW_RAW )
     if (  ctxt->raw  )
-        flags = O_RDONLY;
+    {
+#if defined(ALLOW_RAWWRITE)
+        if (  ctxt->rawwrite && ! ctxt->nowrite  )
+            flags = O_RDWR;
+        else
+#endif /* ALLOW_RAWWRITE */
+            flags = O_RDONLY;
+    }
     else
     {
         flags = O_RDWR;
@@ -1966,12 +2064,13 @@ testIOPSRandom(
         {
             if (  measuring  )
                 ctxt->nreads++;
+            errno = 0;
             nbytes = read( ctxt->fd, ctxt->ioblk, (size_t)ctxt->iosz );
             if (  nbytes != ctxt->iosz  )
             {
                 sprintf( ctxt->msgbuff, 
-                         "%sead failed at offset %'ld",
-                         (ctxt->threads>1)?"r":"R", iooffset );
+                         "%sead failed at offset %'ld - %d (%s)",
+                         (ctxt->threads>1)?"r":"R", iooffset, errno, strerror(errno) );
                 return 1;
             }
         }
@@ -1979,12 +2078,13 @@ testIOPSRandom(
         {
             if (  measuring  )
                 ctxt->nwrites++;
+            errno = 0;
             nbytes = write( ctxt->fd, ctxt->ioblk, (size_t)ctxt->iosz );
             if (  nbytes != ctxt->iosz  )
             {
                 sprintf( ctxt->msgbuff, 
-                         "%srite failed at offset %'ld",
-                         (ctxt->threads>1)?"w":"W", iooffset );
+                         "%srite failed at offset %'ld - %d (%s)",
+                         (ctxt->threads>1)?"w":"W", iooffset, errno, strerror(errno) );
                 return 1;
             }
         }
@@ -2990,6 +3090,13 @@ main(
     )
 {
     int ret = 0;
+#if defined(ALLOW_RAW) && defined(ALLOW_RAWWRITE)
+    char * eval = NULL;
+
+    eval = getenv( ENV_RAWWRITE );
+    if (  ( eval != NULL ) && ( strcmp( eval, ENV_RAWVALUE ) == 0 )  )
+        mctxt.rawwrite = -1;
+#endif /* ALLOW_RAW && ALLOW_RAWWRITE */
 
     setlocale( LC_ALL, "" );
 
