@@ -20,16 +20,14 @@
 #define __USE_GNU
 #include <fcntl.h>
 #undef __USE_GNU
-#else /* macOS */
+#else /* ! LINUX */
 #include <fcntl.h>
-#endif /* macOS */
+#endif /* ! LINUX */
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/stat.h>
-#if defined(LINUX)
-#include <sys/vfs.h>
 #include <sys/statvfs.h>
-#else /* ! LINUX */
+#if ! defined(LINUX)
 #include <sys/param.h>
 #include <sys/mount.h>
 #endif /* ! LINUX */
@@ -43,10 +41,12 @@
  */
 
 #define  PROGNAME         "IOPS"
-#define  VERSION          "2.3"
+#define  VERSION          "2.4"
 
+#if ! defined(SOLARIS)
 #define  ALLOW_RAW        1
 #define  ALLOW_RAWWRITE   1
+#endif /* ALLOW_RAW */
 #define  ENV_RAWWRITE     "IOPSRawWrite"
 #define  ENV_RAWVALUE     "YES"
 
@@ -415,7 +415,7 @@ usage(
 #else  /* ! ALLOW_RAW || ! ALLOW_RAWWRITE */
     printf("         [-geniosz <gsz>] [-threads <nthr>] [-verbose] [-1file [<usrfpath>]]\n");
 #endif /* ! ALLOW_RAW || ! ALLOW_RAWWRITE */
-#if defined(LINUX)
+#if defined(LINUX) || defined(SOLARIS)
     printf("         [-nopreallocate] [-cache] [-nodysnc [-nofsync]]\n\n");
 #else /* macOS */
     printf("         [-nopreallocate] [-rdahead] [-cache] [-nodysnc [-nofsync]]\n\n");
@@ -465,7 +465,6 @@ usage(
     printf("        (1024 bytes), megabytes (1024*1024 bytes) or gigabytes (1024*1024*1024\n");
     printf("        bytes) by using a suffix of k, m or g on the value.\n\n");
 
-#if ! defined(LINUX)
     printf("    -iosz <tsz>\n");
     printf("        The size of each test I/O request, specified in the same manner as\n");
     printf("        for '-fsize'. The value must be > 0 and <= %'ld MB. The default is\n",
@@ -480,40 +479,29 @@ usage(
     printf("        fail.\n\n");
 #endif /* ALLOW_RAW */
 
+#if defined(LINUX)
+    printf("    NOTE:\n");
+    printf("        On Linux, caching is disabled by opening the file with the O_DIRECT\n");
+    printf("        flag. This has the side effect of requiring all I/O to the file to be\n");
+    printf("        filesystem block aligned. Hence on Linux, unless caching is enabled,\n");
+    printf("        the value for '-iosz' must be a multiple of the filesystem's block size.\n\n");
+#endif /* LINUX */
+
+#if defined(SOLARIS)
+    printf("    NOTE:\n");
+    printf("        On Solaris, caching is disabled by using the directio() system call.\n");
+    printf("        This has the side effect of requiring all I/O to the file to be aligned\n");
+    printf("        on a filesystem block boundary. Hence on Solaris, when caching is not\n");
+    printf("        enabled, the value for '-iosz' must be a multiple of the filesystem's\n");
+    printf("        block size.\n\n");
+#endif /* SOLARIS */
+
     printf("    -geniosz <gsz>\n");
     printf("        The size of each write request when creating the test file(s),\n");
     printf("        specified in the same manner as for '-fsize'. Must be > 0 and\n");
     printf("        <= <fsz>. The default is the closest multiple of the filesystem's\n");
     printf("        optimal I/O size to %'ld MB, or %'ld MB if that cannot be determined.\n\n",
                     DFLT_GENIOSZ/MB_MULT, DFLT_GENIOSZ/MB_MULT);
-
-#else /* LINUX */
-
-    printf("    -iosz <tsz>\n");
-    printf("        The size of each test I/O request, specified in the same manner as\n");
-    printf("        for '-fsize'. The value must be > 0 and <= %'ld MB. The default is\n",
-                    MAX_IOSZ/MB_MULT );
-    printf("        %'ld MB.\n\n", DFLT_IOSZ/MB_MULT);
-
-#if defined(ALLOW_RAW)
-    printf("        When testing a block or raw device, the value must be a multiple of\n");
-    printf("        the device's block size, as reported by 'stat', or the test will\n");
-    printf("        fail.\n\n");
-#endif /* ALLOW_RAW */
-
-    printf("    NOTE:\n");
-    printf("        On Linux, caching is disabled by opening the file with the O_DIRECT\n");
-    printf("        flag. This has the side effect of requiring all I/O to the file to be\n");
-    printf("        filesystem block aligned. Hence on Linux, unless caching is enabled,\n");
-    printf("        the value for '-iosz' must be a multiple of the filesystem's block size\n");
-    printf("        the test will fail.\n\n");
-
-    printf("    -geniosz <gsz>\n");
-    printf("        The size of each write request when creating the test file(s),\n");
-    printf("        specified in the same manner as for '-fsize'. Must be > 0 and\n");
-    printf("        <= <fsz>. The default is %'ld MB.\n\n",
-                    DFLT_GENIOSZ/MB_MULT);
-#endif /* LINUX */
 
     printf("    -dur <tdur>\n");
     printf("        The duration of the measured part of the test in seconds. Must be\n");
@@ -626,7 +614,7 @@ usage(
     printf("        Not allowed when testing a block or raw device.\n\n");
 #endif /* ALLOW_RAW */
 
-#if ! defined(LINUX)
+#if defined(MACOS)
     printf("    -rdahead\n");
     printf("        Normally OS read ahead is disabled for the test file(s). If this\n");
     printf("        option is specified then read ahead will not be explicitly disabled.\n\n");
@@ -635,7 +623,7 @@ usage(
     printf("        Not allowed when testing a block or raw device.\n\n");
 #endif /* ALLOW_RAW */
 
-#endif /* ! Linux */
+#endif /* MACOS */
 
     printf("    -cache\n");
     printf("        Normally OS filesystem caching is disabled for the test file(s). If\n");
@@ -645,7 +633,7 @@ usage(
     printf("        Not allowed when testing a block or raw device.\n\n");
 #endif /* ALLOW_RAW */
 
-#if defined(LINUX)
+#if defined(LINUX) || defined(SOLARIS)
     printf("    IMPORTANT NOTE:\n");
     printf("        On Linux, OS caching is disabled by opening the file(s) with the\n");
     printf("        O_DIRECT flag. This has the side effect of requiring all I/O to the\n");
@@ -653,7 +641,7 @@ usage(
     printf("        is enabled, values for '-iosz' must be a multiple of the filesystem\n");
     printf("        block size or the test will fail.\n\n");
 
-#endif /* LINUX */
+#endif /* LINUX || SOLARIS */
 
     printf("    -nodsync\n");
     printf("        Normally the test file(s) are opened with the O_DSYNC flag. If this\n");
@@ -864,7 +852,7 @@ parseArgs(
             ctxt->nopreallocate = foundNopreallocate = 1;
         }
         else
-#if ! defined(LINUX)
+#if defined(MACOS)
         if (  strcmp( argv[argno], "-rdahead" ) == 0  )
         {
             if (  ctxt->testmode == MODE_CREATE  )
@@ -880,7 +868,7 @@ parseArgs(
             ctxt->rdahead = foundRdahead = 1;
         }
         else
-#endif /* ! LINUX */
+#endif /* MACOS */
         if (  strcmp( argv[argno], "-1file" ) == 0  )
         {
             if (  ctxt->testmode == MODE_CREATE  )
@@ -1516,15 +1504,15 @@ openFile(
     int flags, ret;
     long startus, stopus;
     struct stat sbuf;
-    struct statfs fsbuf;
+    struct statvfs fsbuf;
 
     if (  create && ! stat( ctxt->tfname, &sbuf )  )
     {
         if (  ctxt->threads > 1  )
-            fprintf( stderr, "*** Thread %d: file '%s' already exists\n", 
+            fprintf( stderr, "\n*** Thread %d: file '%s' already exists\n\n", 
                      ctxt->threadno, ctxt->tfname );
         else
-            fprintf( stderr, "*** File '%s' already exists\n", ctxt->tfname );
+            fprintf( stderr, "\n*** File '%s' already exists\n\n", ctxt->tfname );
         return 1;
     }
 
@@ -1548,7 +1536,7 @@ openFile(
 #if defined(LINUX)
         if (  ! ctxt->cache  )
             flags |= O_DIRECT;
-#endif /* Linux */
+#endif /* LINUX */
     }
 #else /* ! ALLOW_RAW */
     flags = O_RDWR;
@@ -1559,53 +1547,84 @@ openFile(
 #if defined(LINUX)
     if (  ! ctxt->cache  )
         flags |= O_DIRECT;
-#endif /* Linux */
+#endif /* LINUX */
 #endif /* ! ALLOW_RAW */
     errno = 0;
     ctxt->fd = open( ctxt->tfname, flags, 0600 );
     if (  ctxt->fd < 0  )
     {
         if (  ctxt->threads > 1  )
-            fprintf( stderr, "*** Thread %d: unable to %s file '%s' - %s\n",
+            fprintf( stderr, "\n*** Thread %d: unable to %s file '%s' - %s\n\n",
                      ctxt->threadno, create?"create":"open", ctxt->tfname, strerror(errno) );
         else
-            fprintf( stderr, "*** Unable to %s file '%s' - %s\n",
+            fprintf( stderr, "\n*** Unable to %s file '%s' - %s\n\n",
                      create?"create":"open", ctxt->tfname, strerror(errno) );
         return 1;
     }
+#if defined(SOLARIS)
+    if (  ctxt->cache  )
+        flags = DIRECTIO_OFF;
+    else
+        flags = DIRECTIO_ON;
+    errno = 0;
+    if (  directio( ctxt->fd, flags )  )
+    {
+        if (  ctxt->threads > 1  )
+            fprintf( stderr, "\n*** Thread %d: unable to %s caching for '%s'\n\n",
+                     ctxt->threadno, (flags==DIRECTIO_OFF)?"enable":"disable", ctxt->tfname );
+        else
+            fprintf( stderr, "\n*** Unable to %s caching for '%s'\n\n",
+                     (flags==DIRECTIO_OFF)?"enable":"disable", ctxt->tfname );
+    }
+#endif /* SOLARIS */
 
 #if defined( ALLOW_RAW )
     if (  ! ctxt->raw  )
     {
 #endif /* ALLOW_RAW */
-        if (  fstatfs( ctxt->fd, &fsbuf ) == 0  )
+        if (  fstatvfs( ctxt->fd, &fsbuf ) == 0  )
         {
+            if ( fsbuf.f_frsize > 0 )
+                ctxt->blksz = fsbuf.f_frsize;
             if ( fsbuf.f_bsize > 0 )
-                ctxt->blksz = fsbuf.f_bsize;
-#if ! defined(LINUX)
-            if ( fsbuf.f_iosize > 0 )
-                ctxt->optiosz = fsbuf.f_iosize;
-#endif /* ! LINUX */
+                ctxt->optiosz = fsbuf.f_bsize;
         }
 #if defined( ALLOW_RAW )
     }
 #endif /* ALLOW_RAW */
 
-#if ! defined(LINUX)
+#if defined(LINUX) || defined(SOLARIS)
+    if (  ! ctxt->cache  )
+    {
+        if (  ctxt->iosz % ctxt->blksz  )
+        {
+            if (  ctxt->threads > 1  )
+                fprintf( stderr, "\n*** Thread %d: value for '-iosz' is not a multiple of %'ld\n\n",
+                         ctxt->threadno, ctxt->blksz );
+            else
+                fprintf( stderr, "\n*** Value for '-iosz' is not a multiple of %'ld\n\n", ctxt->blksz );
+            close( ctxt->fd );
+            ctxt->fd = -1;
+            return 1;
+        }
+    }
+#endif /* LINUX || SOLARIS */
+
+#if defined(MACOS)
     if (  ctxt->verbose && ! ctxt->usriosz && ! ctxt->optiosz  )
     {
         if (  ctxt->threads > 1  )
-            printf("Thread %d: unable to determine optimal I/O size so using %'ld bytes\n",
+            printf("\nThread %d: unable to determine optimal I/O size so using %'ld bytes\n\n",
                     ctxt->threadno, DFLT_IOSZ );
         else
-            printf("Unable to determine optimal I/O size so using %'ld bytes\n",
+            printf("\nUnable to determine optimal I/O size so using %'ld bytes\n\n",
                     DFLT_IOSZ );
     }
-#endif /* ! LINUX */
+#endif /* MACOS */
     if (  ! ctxt->optiosz  )
         ctxt->optiosz = DFLT_IOSZ;
 
-#if ! defined(LINUX)
+#if defined(MACOS)
 #if defined( ALLOW_RAW )
     if ( ! ctxt->raw  )
     {
@@ -1615,11 +1634,13 @@ openFile(
             if (  fcntl( ctxt->fd, F_RDAHEAD, 0 )  )
             {
                 if (  ctxt->threads > 1  )
-                    fprintf( stderr, "*** Thread %d: unable to disable read-ahead for '%s'\n",
+                    fprintf( stderr, "\n*** Thread %d: unable to disable read-ahead for '%s'\n\n",
                              ctxt->threadno, ctxt->tfname );
                 else
-                    fprintf( stderr, "*** unable to disable read-ahead for '%s'\n",
+                    fprintf( stderr, "\n*** Unable to disable read-ahead for '%s'\n\n",
                              ctxt->tfname );
+                close( ctxt->fd );
+                ctxt->fd = -1;
                 return 1;
             }
         }
@@ -1629,22 +1650,24 @@ openFile(
             if (  fcntl( ctxt->fd, F_NOCACHE, 1 )  )
             {
                 if (  ctxt->threads > 1  )
-                    fprintf( stderr, "*** Thread %d: unable to disable caching for '%s'\n",
+                    fprintf( stderr, "\n*** Thread %d: unable to disable caching for '%s'\n\n",
                              ctxt->threadno, ctxt->tfname );
                 else
-                    fprintf( stderr, "*** : Unable to disable caching for '%s'\n",
+                    fprintf( stderr, "\n*** : Unable to disable caching for '%s'\n\n",
                              ctxt->tfname );
+                close( ctxt->fd );
+                ctxt->fd = -1;
                 return 1;
             }
         }
 #if defined( ALLOW_RAW )
     }
 #endif /* ALLOW_RAW */
-#endif /* macOS */
+#endif /* MACOS */
 
     if ( ! ctxt->usrfile && ! ctxt->nopreallocate  )
     {
-#if defined(LINUX)
+#if defined(LINUX) || defined(SOLARIS)
         startus = getTimeAsUs();
         ret = posix_fallocate( ctxt->fd, (off_t)0, (off_t)ctxt->fsz );
         stopus = getTimeAsUs();
@@ -1659,7 +1682,7 @@ openFile(
             else
                 printf("Thread %d: preallocation failed or is not supported\n", ctxt->threadno );
         }
-#else /* macOS */
+#else /* MACOS */
         fstore_t prealloc;
 
         // Let's try and pre-allocate the space, just for fun
@@ -1707,7 +1730,7 @@ openFile(
                     printf("Preallocation failed or is not supported\n");
             }
         }
-#endif /* macOS */
+#endif /* MACOS */
     } // pre-allocate
 
     return 0;
@@ -1896,10 +1919,8 @@ cleanupContexts(
                 int        numcontexts
                )
 {
-    int i, verbose, onefile;
+    int i;
 
-    verbose = threadcontexts[i].verbose;
-    onefile = threadcontexts[i].onefile;
     for ( i = 0; i < numcontexts; i++ )
     {
         if (  threadcontexts[i].fd >= 0  )
@@ -1971,21 +1992,21 @@ generateFile(
     {
         startus = getTimeAsUs();
         errno = 0;
-#if defined(LINUX)
+#if defined(LINUX) || defined(SOLARIS)
         if (  fdatasync( ctxt->fd )  )
         {
             sprintf( ctxt->msgbuff, "fdatasync() failed: %d (%s)",
                      errno, strerror( errno )  );
             return 1;
         }
-#else /* macOS */
+#else /* MACOS */
         if (  fcntl( ctxt->fd, F_FULLFSYNC, 0 ) == -1  )
         {
             sprintf( ctxt->msgbuff, "fcntl( ..., F_FULLFSYNC, ...) failed: %d (%s)",
                      errno, strerror( errno )  );
             return 1;
         }
-#endif /* macOS */
+#endif /* MACOS */
         stopus = getTimeAsUs();
         ctxt->fsyncus = stopus - startus;
     }
@@ -2140,21 +2161,21 @@ testIOPSRandom(
     {
         startus = getTimeAsUs();
         errno = 0;
-#if defined(LINUX)
+#if defined(LINUX) || defined(SOLARIS)
         if (  fdatasync( ctxt->fd )  )
         {
             sprintf( ctxt->msgbuff, "fdatasync() failed: %d (%s)",
                      errno, strerror( errno )  );
             return 1;
         }
-#else /* macOS */
+#else /* MACOS */
         if (  fcntl( ctxt->fd, F_FULLFSYNC, 0 ) == -1  )
         {
             sprintf( ctxt->msgbuff, "fcntl( ..., F_FULLFSYNC, ...) failed: %d (%s)",
                      errno, strerror( errno )  );
             return 1;
         }
-#endif /* macOS */
+#endif /* MACOS */
         stopus = getTimeAsUs();
         ctxt->fsyncus = stopus - startus;
     }
@@ -2319,21 +2340,21 @@ testIOPSSequential(
     {
         startus = getTimeAsUs();
         errno = 0;
-#if defined(LINUX)
+#if defined(LINUX) || defined(SOLARIS)
         if (  fdatasync( ctxt->fd )  )
         {
             sprintf( ctxt->msgbuff, "fdatasync() failed: %d (%s)",
                      errno, strerror( errno )  );
             return 1;
         }
-#else /* macOS */
+#else /* MACOS */
         if (  fcntl( ctxt->fd, F_FULLFSYNC, 0 ) == -1  )
         {
             sprintf( ctxt->msgbuff, "fcntl( ..., F_FULLFSYNC, ...) failed: %d (%s)",
                      errno, strerror( errno )  );
             return 1;
         }
-#endif /* macOS */
+#endif /* MACOS */
         stopus = getTimeAsUs();
         ctxt->fsyncus = stopus - startus;
     }
@@ -3038,9 +3059,9 @@ createFile(
         if (  ctxt->nopreallocate  )
             printf("Preallocation is disabled\n\n");
         printf("Filesystem block size is %'ld bytes\n", ctxt->blksz);
-#if ! defined(LINUX)
+#if defined(MACOS) || defined(SOLARIS)
         printf("Filesystem optimal I/O size is %'ld bytes\n", ctxt->optiosz);
-#endif /* LINUX */
+#endif /* MACOS || SOLARIS */
         printf("\nFile generation block size is %'ld bytes\n\n", ctxt->geniosz);
 
         gettimeofday( &pstart, NULL );
@@ -3164,14 +3185,10 @@ main(
         {
 #if defined( ALLOW_RAW )
             printf("\n%s block size is %'ld bytes\n", mctxt.raw?"Device":"Filesystem", mctxt.blksz);
-#if ! defined(LINUX)
             printf("%s optimal I/O size is %'ld bytes\n", mctxt.raw?"Device":"Filesystem", mctxt.optiosz);
-#endif /* LINUX */
 #else /* ! ALLOW_RAW */
             printf("\nFilesystem block size is %'ld bytes\n", mctxt.blksz);
-#if ! defined(LINUX)
             printf("Filesystem optimal I/O size is %'ld bytes\n", mctxt.optiosz);
-#endif /* LINUX */
 #endif /* ! ALLOW_RAW */
             if (  ! mctxt.usrfile  )
                 printf("\nFile generation block size is %'ld bytes\n", mctxt.geniosz);

@@ -5,8 +5,7 @@ Usage:
 
     iops { s[equential] | r[andom] } [-file <fpath>] [-fsize <fsz>] [-cpu]
          [-iosz <tsz>] [-dur <tdur>] [-ramp <tramp>] [-noread | -nowrite]
-         [-geniosz <gsz>] [-threads <nthr>] [-verbose]
-         [-1file [<usrfpath> [-rawWrite]]]
+         [-geniosz <gsz>] [-threads <nthr>] [-verbose] [-1file [<usrfpath>]]
          [-nopreallocate] [-cache] [-nodysnc [-nofsync]]
 
     iops c[reate] [-file <fpath>] [-fsize <fsz>] [-geniosz <gsz>]
@@ -55,15 +54,12 @@ Parameters are:
         the optimal I/O size for the filesystem containing the test file(s)
         or 1 MB if that cannot be determined.
 
-        When testing a block or raw device, the value must be a multiple of
-        the device's block size, as reported by 'stat', or the test will
-        fail.
-
     NOTE:
-        On Linux, caching is disabled by opening the file with the O_DIRECT
-        flag. This has the side effect of requiring all I/O to the file to be
-        filesystem block aligned. Hence on Linux, unless caching is enabled,
-        the value for '-iosz' must be a multiple of the filesystem's block size.
+        On Solaris, caching is disabled by using the directio() system call.
+        This has the side effect of requiring all I/O to the file to be aligned
+        on a filesystem block boundary. Hence on Solaris, when caching is not
+        enabled, the value for '-iosz' must be a multiple of the filesystem's
+        block size.
 
     -geniosz <gsz>
         The size of each write request when creating the test file(s),
@@ -107,7 +103,7 @@ achieve this. The setings below allow you to change aspects of the program's
 behaviour. This may be interesting but the results so achieved should be
 interpreted with caution.
 
-    -1file [<usrfpath> [-rawWrite]]
+    -1file [<usrfpath>]
         Normally each test thread creates its own test file in order to avoid
         any filesystem contention that might arise from multiple threads
         performing I/O on the same file. When this option is specified, all
@@ -117,16 +113,6 @@ interpreted with caution.
         Normally the test file is created automatically, but if the optional
         <usrfpath> value is specified then that pre-existing file is used
         instead.
-
-        <usrfpath> may refer to a block special or character special (raw) file
-        (device). In order to perform write tests on a block or raw device you
-        must both (a) set the environment variable named 'IOPSRawWrite' to the
-        value 'YES' and specify the '-rawWrite' option.
-
-    IMPORTANT WARNING:
-        Performing write tests on a block or raw device will irretrievably
-        corrupt any filesystem or other data on the device. YOU HAVE BEEN
-        WARNED!
 
     NOTES:
         - If a user file is specified it must be at least 1 GB in size.
@@ -145,29 +131,14 @@ interpreted with caution.
           will fail unless you use '-fsize' to limit the maximum offset
           within the file.
 
-        - Testing a block or raw device will likely require you to execute this
-          utility as 'root'.
-
-        - You may not be able to test a block device if there is a filesystem
-          currently mounted on it. Even if the OS does not prohibit this you
-          are strongly advised not to do so.
-
-        - You may not be able to test a raw device if there is a filesystem
-          currently mounted on its corresponding block device. Even if the OS
-          does not prohibit this you are strongly advised not to do so.
-
     -nopreallocate
         Normally space for the test file(s) is pre-allocated (contiguously
         if possible) using OS APIs. If this option is specified then the space
         will not be pre-allocated.
 
-        Not allowed when testing a block or raw device.
-
     -cache
         Normally OS filesystem caching is disabled for the test file(s). If
         this option is specified then caching will not be explicitly disabled.
-
-        Not allowed when testing a block or raw device.
 
     IMPORTANT NOTE:
         On Linux, OS caching is disabled by opening the file(s) with the
@@ -180,14 +151,10 @@ interpreted with caution.
         Normally the test file(s) are opened with the O_DSYNC flag. If this
         option is specified then that flag will not be used.
 
-        Not allowed when testing a block or raw device.
-
     -nofsync
         If '-nodsync' is specified, then at the end of a write test each thread
         will call the platform equivalent of fdatasync() on the file. If this
         option is specified then that call is not made.
-
-        Not allowed when testing a block or raw device.
 
     NOTES:
         - The measured time for write tests includes the time for any 'close()'
