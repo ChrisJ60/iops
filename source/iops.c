@@ -41,7 +41,7 @@
  */
 
 #define  PROGNAME         "IOPS"
-#define  VERSION          "2.4"
+#define  VERSION          "2.5"
 
 #if ! defined(SOLARIS)
 #define  ALLOW_RAW        1
@@ -661,11 +661,11 @@ usage(
 #endif /* ALLOW_RAW */
 
     printf("    NOTES:\n");
-    printf("        - The measured time for write tests includes the time for any 'close()'\n");
-    printf("          or 'fdatasync()' operation that is part of the test.\n\n");
+    printf("        - The measured time for write tests includes any fdatasync() operations\n");
+    printf("          but not any close() operations.\n\n");
 
     printf("        - Due to an implementation quirk, the CPU time reported for write tests\n");
-    printf("          does not include any 'fdatasync()' or 'close()' operations.\n\n");
+    printf("          does not include any fdatasync() or close() operations.\n\n");
 
     exit( 100 );
 } // usage
@@ -2196,7 +2196,8 @@ testIOPSRandom(
     if (  readops  )
         ctxt->rdduration = ctxt->usrdstop - ctxt->usrdstart;
     else
-        ctxt->wrduration = (ctxt->uswrstop - ctxt->uswrstart) + ctxt->fsyncus + ctxt->closeus;
+        ctxt->wrduration = (ctxt->uswrstop - ctxt->uswrstart) + ctxt->fsyncus;
+        // ctxt->wrduration = (ctxt->uswrstop - ctxt->uswrstart) + ctxt->fsyncus + ctxt->closeus;
 
     return 0;
 } // testIOPSRandom
@@ -2375,7 +2376,8 @@ testIOPSSequential(
     if (  readops  )
 	ctxt->rdduration = ctxt->usrdstop - ctxt->usrdstart;
     else
-        ctxt->wrduration = (ctxt->uswrstop - ctxt->uswrstart) + ctxt->fsyncus + ctxt->closeus;
+        ctxt->wrduration = (ctxt->uswrstop - ctxt->uswrstart) + ctxt->fsyncus;
+        // ctxt->wrduration = (ctxt->uswrstop - ctxt->uswrstart) + ctxt->fsyncus + ctxt->closeus;
 
     return 0;
 } // testIOPSSequential

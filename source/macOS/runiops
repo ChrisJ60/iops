@@ -55,9 +55,7 @@ usage()
     echo "Normally tests are run in non-cached mode but you can run them"
     echo "in cached mode by specifying '-cached'."
     echo
-    echo "A full iteration of tests takes around 28 minutes so using the"
-    echo "the default of 1 through 4 threads the entire test cycle will"
-    echo "will take a little under 2 hours."
+    echo "A full iteration of tests takes around 50 minutes."
     echo
     exit 100
 }
@@ -178,7 +176,7 @@ init()
     psudo rm -f "${tpath}" >& /dev/null
 
     tmp=${fsblksz}+1
-    iosizes="512 ${fsblksz} ${tmp} ${fsoptiosz}"
+    iosizes="${fsblksz} ${tmp} ${fsoptiosz}"
     tmp=${fsoptiosz}+1
     iosizes="${iosizes} ${tmp}"
     tmp=${fsoptiosz}*2

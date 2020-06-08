@@ -157,9 +157,9 @@ interpreted with caution.
         option is specified then that call is not made.
 
     NOTES:
-        - The measured time for write tests includes the time for any 'close()'
-          or 'fdatasync()' operation that is part of the test.
+        - The measured time for write tests includes any fdatasync() operations
+          but not any close() operations.
 
         - Due to an implementation quirk, the CPU time reported for write tests
-          does not include any 'fdatasync()' or 'close()' operations.
+          does not include any fdatasync() or close() operations.
 
